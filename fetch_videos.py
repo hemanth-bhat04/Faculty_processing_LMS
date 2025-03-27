@@ -5,9 +5,12 @@ def get_course_vids_secs(course_id: int, server_type: str, video_type: int) -> t
     """
     Function to get video_ids and sections_ids belonging to a particular course
     """
+    # query = """select distinct video_id, course_section_id from "Lms_videomaster" where course_section_id in
+    # (select distinct id from "Lms_coursesections" where course_content_id = {}) and type = {}""".format(course_id,
+    #                                                                                                     video_type)
     query = """select distinct video_id, course_section_id from "Lms_videomaster" where course_section_id in
-    (select distinct id from "Lms_coursesections" where course_content_id = {}) and type = {}""".format(course_id,
-                                                                                                        video_type)
+    (select id from "Lms_coursesections" where course_content_id = {} order by cno) and type = {}""".format(course_id,
+                                                                                                               video_type)
 
     try:
         if server_type == 'dev':
