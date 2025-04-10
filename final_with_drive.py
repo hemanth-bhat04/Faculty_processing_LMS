@@ -111,6 +111,41 @@ def normalize_keyword(keyword: str) -> str:
     return re.sub(r'[^\w\s]', '', keyword.lower()).strip()
 
 
+def analyze_questions(transcript):
+    import re
+    
+    # Add debug prints
+    print("\nDEBUG - Question Analysis:")
+    print(f"Transcript length: {len(transcript)} characters")
+    
+    # Split transcript into sentences (basic splitting on .!?)
+    sentences = re.split('[.!?]+', transcript)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    print(f"Number of sentences found: {len(sentences)}")
+    
+    # Common question patterns
+    patterns = [
+        r'\?',  # Questions with question mark
+        r'^(what|who|where|when|why|how|could|would|will)\s+.*',  # WH questions 
+        r'^(do|does|did|is|are|was|were|have|has|had)\s+\w+.*',  # Auxiliary verb questions
+        r'^(can|could|would|will|should|may|might)\s+\w+.*'  # Modal questions
+    ]
+    
+    questions = []
+    for sentence in sentences:
+        # Check if sentence matches any pattern
+        is_question = False
+        for pattern in patterns:
+            if re.search(pattern, sentence.lower()):
+                is_question = True
+                break
+                
+        if is_question and len(sentence) > 10:
+            questions.append(sentence)
+    
+    print(f"DEBUG - Questions detected: {len(questions)}\n")
+    return len(questions), questions
+
 def process_audio_chunks(file_path):
     chunks = split_audio_into_chunks(file_path)
     transcript_queue = Queue()
@@ -136,6 +171,21 @@ def process_audio_chunks(file_path):
     if temp_transcript.strip():
         processed_transcripts.append(temp_transcript.strip())
     
+    # In process_audio_chunks, before analyzing questions
+    complete_transcript = " ".join(processed_transcripts)
+    print(f"\nDEBUG - Complete Transcript Length: {len(complete_transcript)}")
+    if len(complete_transcript) < 100:  # If transcript is suspiciously short
+        print("WARNING: Transcript might be empty or too short")
+    
+    # Analyze questions in the complete transcript
+    question_count, questions_list = analyze_questions(complete_transcript)
+    print("\nQuestion Analysis Results:")
+    print(f"Total questions asked: {question_count}")
+    print("\nQuestions found:")
+    for i, question in enumerate(questions_list, 1):
+        print(f"{i}. {question}")
+        
+    
     extracted_keywords = set()
     
     for transcript in processed_transcripts:
@@ -144,10 +194,10 @@ def process_audio_chunks(file_path):
         _, phrasescorelist, _, _ = get_weighted_queries(transcript, len(transcript), subject, level)
         extracted_keywords.update(normalize_keyword(kw[0]) for kw in phrasescorelist)
     
-    return extracted_keywords
+    return extracted_keywords, question_count  # Return both values
 
 
-corrected_transcript_keywords = process_audio_chunks("audio_file.mp3")
+corrected_transcript_keywords, total_questions = process_audio_chunks("audio_file.mp3")  # Capture both return values
 print("Extracted Keywords:", corrected_transcript_keywords)
 
 
@@ -155,6 +205,13 @@ print("Extracted Keywords:", corrected_transcript_keywords)
 # Using 'Oy4duAOGdWQ' as video_id in this case
 hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
 flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]  # Flatten the list of tuples
+
+# Add this before semantic matching
+def normalize_all_keywords(keywords):
+    return [normalize_keyword(kw) for kw in keywords if kw.strip()]
+
+corrected_transcript_keywords = normalize_all_keywords(corrected_transcript_keywords)
+flat_keywords = normalize_all_keywords(flat_keywords)
 
 # Step 4: Semantic Matching
 semantic_result = semantic_smart_answer(
@@ -189,5 +246,16 @@ print(f"Answer Match: {answer_match}")
 print(f"Key Phrases Missing in Student Answer Present in Trainer Answer: {', '.join(missing_concepts)}")
 print(f"Key Phrases Mentioned in Student Answer Not in Trainer Answer: {', '.join(additional_concepts)}")
 print(f"Missed Keywords: {', '.join(missed_keywords)}")
-print(f"Extra Keywords: {', '.join(extra_keywords)}")
+#print(f"Extra Keywords: {', '.join(extra_keywords)}")
 print(f"Reasons: {reasons}")
+
+print("\n" + "-"*50)
+print("FINAL ANALYSIS")
+print("-"*50)
+print(f"Content Match Percentage: {answer_match}%")
+print(f"Total Questions Found: {total_questions}")  # Use total_questions here
+print("\nMissed Keywords from Expected Content:")
+for i, keyword in enumerate(missed_keywords, 1):
+    print(f"{i}. {keyword}")
+print("-"*50)
+
