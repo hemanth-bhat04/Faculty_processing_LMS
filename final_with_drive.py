@@ -238,8 +238,33 @@ additional_concepts = response['content'][0]['additional_concepts']
 reasons = response['content'][0]['reasons']
 
 # Compute missed and extra keywords manually
-missed_keywords = [kw for kw in corrected_transcript_keywords if kw not in missing_concepts]
 extra_keywords = [kw for kw in flat_keywords if kw not in additional_concepts]
+
+# Replace the existing missed_keywords computation section with:
+
+def get_top_missed_keywords(corrected_keywords, missing_concepts, transcript, n=10):
+    """Get top N missed keywords based on weights from transcript"""
+    # Get weights for the complete transcript
+    _, phrasescorelist, _, _ = get_weighted_queries(transcript, len(transcript), "computer science", "computer science")
+    
+    # Create a dictionary of keyword-weight pairs from phrasescorelist
+    keyword_weights = {kw: weight for kw, weight in phrasescorelist}
+    
+    # Get missed keywords with their weights
+    weighted_missed = []
+    for kw in corrected_keywords:
+        if kw not in missing_concepts:
+            # Use the weight from phrasescorelist if available, else use 0
+            weight = keyword_weights.get(kw, 0)
+            weighted_missed.append((kw, weight))
+    
+    # Sort by weight in descending order and take top N
+    sorted_keywords = sorted(weighted_missed, key=lambda x: x[1], reverse=True)
+    return [kw for kw, _ in sorted_keywords[:n]], phrasescorelist
+
+# Get the transcript from the joined corrected_transcript_keywords
+transcript = " ".join(corrected_transcript_keywords)
+missed_keywords, phrasescorelist = get_top_missed_keywords(corrected_transcript_keywords, missing_concepts, transcript)
 
 # Print all the details
 print(f"Answer Match: {answer_match}")
@@ -253,9 +278,10 @@ print("\n" + "-"*50)
 print("FINAL ANALYSIS")
 print("-"*50)
 print(f"Content Match Percentage: {answer_match}%")
-print(f"Total Questions Found: {total_questions}")  # Use total_questions here
-print("\nMissed Keywords from Expected Content:")
+print(f"Total Questions Found: {total_questions}")
+print("\nTop 10 Missing Keywords by Weight:")
 for i, keyword in enumerate(missed_keywords, 1):
-    print(f"{i}. {keyword}")
+    weight = dict(phrasescorelist).get(keyword, 0)
+    print(f"{i}. {keyword} (weight: {weight:.2f})")
 print("-"*50)
 
