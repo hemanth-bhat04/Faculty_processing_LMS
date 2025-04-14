@@ -18,7 +18,15 @@ s3 = boto3.client('s3',
 
 
 # Google Drive file download function 
+import os
+import requests
+
 def download_file_from_google_drive(file_id, destination):
+    # Delete the existing file if it exists
+    if os.path.exists(destination):
+        os.remove(destination)
+        print(f"Deleted existing file: {destination}")
+
     def get_confirm_token(response_object):
         for key, value in response_object.cookies.items():
             if key.startswith('download_warning'):
@@ -42,6 +50,7 @@ def download_file_from_google_drive(file_id, destination):
         response = session.get(URL, params=params, stream=True)
 
     save_response_content(response)
+    print(f"Downloaded file to {destination}")
 
 
 # S3 upload function 
@@ -59,11 +68,12 @@ def generate_s3_link(bucket, s3_file, region):
 
 
 # Fetch the audio file from Google Drive 
-google_drive_file_id = "1LonTXNj_rtUujpt7vs3XnpHnkjrYkw7y"  
-local_audio_file_path = "audio_file1.mp3"
-download_file_from_google_drive(google_drive_file_id, local_audio_file_path)
+google_drive_file_id = "1JIcVbTGjJB8si7r59UnOFBsPkFLmd--s"  
+local_audio_local_audio_file_path = "audio_file2.mp3"
+print(f"Downloading new file with ID: {google_drive_file_id}")
+download_file_from_google_drive(google_drive_file_id, local_audio_local_audio_file_path)
 
-def split_audio_into_chunks(file_path, chunk_duration=240):
+def split_audio_into_chunks(local_audio_file_path, chunk_duration=240):
     """
     Splits the audio into chunks of specified duration (default: 4 minutes = 240 seconds).
     Using soundfile to split the audio with proper error handling.
@@ -75,10 +85,10 @@ def split_audio_into_chunks(file_path, chunk_duration=240):
         os.makedirs(output_dir, exist_ok=True)
 
         print("\n=== Processing Audio File ===")
-        print(f"Input file: {file_path}")
+        print(f"Input file: {local_audio_file_path}")
 
         # Read the audio file
-        audio, sample_rate = sf.read(file_path)
+        audio, sample_rate = sf.read(local_audio_file_path)
         chunk_size_samples = int(chunk_duration * sample_rate)
         chunks = []
 
@@ -157,56 +167,42 @@ def count_questions_in_transcript(transcript: str) -> int:
     
     return question_count
 
-# Load a pre-trained pipeline for text classification
-question_classifier = pipeline("text-classification", model="distilbert-base-uncased")
+# Commenting out the pipeline initialization
+# question_classifier = pipeline("text-classification", model="distilbert-base-uncased")
 
-def count_questions_with_transformers(transcript: str) -> int:
-    """
-    Counts the number of questions in the transcript using Hugging Face Transformers.
-    A question is identified based on the model's classification.
-    """
-    sentences = transcript.split(".")  # Split transcript into sentences
-    question_count = 0
+# Commenting out the transformer-based question counting function
+# def count_questions_with_transformers(transcript: str) -> int:
+#     sentences = transcript.split(".")
+#     question_count = 0
+#     batch_size = 16  # Adjust based on available memory
+#     batches = [sentences[i:i + batch_size] for i in range(0, len(sentences), batch_size)]
 
-    for sentence in sentences:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
+#     for batch in batches:
+#         try:
+#             results = question_classifier(batch)
+#             for sentence, result in zip(batch, results):
+#                 if "?" in sentence or result["label"] == "QUESTION":
+#                     question_count += 1
+#         except Exception as e:
+#             print(f"Error processing batch: {e}")
+#     return question_count
 
-        # Handle long sentences by splitting them into smaller chunks
-        if len(sentence) > 512:
-            print(f"Splitting long sentence: {sentence[:50]}... (length: {len(sentence)})")
-            # Split the sentence into smaller chunks (e.g., by words)
-            words = sentence.split()
-            chunks = [" ".join(words[i:i + 50]) for i in range(0, len(words), 50)]  # Split into chunks of 50 words
-        else:
-            chunks = [sentence]
-
-        for chunk in chunks:
-            try:
-                # Use the classifier to predict if the chunk is a question
-                result = question_classifier(chunk)
-                if "?" in chunk or result[0]["label"] == "QUESTION":  # Adjust label based on the model
-                    question_count += 1
-            except Exception as e:
-                print(f"Error processing chunk: {chunk[:50]}... - {e}")
-
-    return question_count
-
-def process_audio_chunks(file_path):
+def process_audio_chunks(local_audio_file_path):
     # Split the audio file into smaller chunks
-    chunks = split_audio_into_chunks(file_path)
+    chunks = split_audio_into_chunks(local_audio_file_path)
+    print(f"Chunks created: {chunks}")
     if not chunks:
         print("Error: No audio chunks were created")
-        return [], 0, set(), set(), []  # Return empty sets for keywords and missed keywords, and 0 for questions
+        return [], 0, set(), set(), []
 
     transcript_queue = Queue()
 
     # Process each chunk individually
     for chunk_path in chunks:
         transcript = transcribe_audio(chunk_path)
+        print(f"Transcript for {chunk_path}: {transcript}")
         if transcript:
-            transcript_queue.put(transcript)  # Direct transcript without correction
+            transcript_queue.put(transcript)
         else:
             transcript_queue.put("")
 
@@ -226,25 +222,24 @@ def process_audio_chunks(file_path):
 
     # Combine all transcripts into a single transcript
     complete_transcript = " ".join(processed_transcripts)
-    print(f"\nDEBUG - Complete Transcript Length: {len(complete_transcript)}")
-    if len(complete_transcript) < 100:  # If transcript is suspiciously short
+    print(f"\nDEBUG - Complete Transcript: {complete_transcript}")
+    print(f"DEBUG - Complete Transcript Length: {len(complete_transcript)}")
+    if len(complete_transcript) < 100:
         print("WARNING: Transcript might be empty or too short")
 
-    # Count questions in the transcript
-    question_count = count_questions_with_transformers(complete_transcript)
+    # Use regex-based question counting
+    question_count = count_questions_in_transcript(complete_transcript)
+    print(f"DEBUG - Total Questions Detected: {question_count}")
 
-    # Placeholder for missed keywords (you can implement the logic if needed)
-    primary_missed_keywords = set()  # Replace with actual logic if required
-    secondary_missed_keywords = set()  # Replace with actual logic if required
-    top_10_secondary_missed_keywords = []  # Replace with actual logic if required
-
-    print("\nQuestion Analysis Results:")
-    print(f"Total questions asked: {question_count}")
+    # Placeholder for missed keywords
+    primary_missed_keywords = set()
+    secondary_missed_keywords = set()
+    top_10_secondary_missed_keywords = []
 
     return processed_transcripts, question_count, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords
 
-# Process the audio file and extract keywords
-corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks("audio_file.mp3")
+# Use the dynamically downloaded file path in the process_audio_chunks function
+corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
 if corrected_transcript_keywords:  # Only proceed if we have keywords
     # Fetching keywords from fetch_keywords.py (silently)
