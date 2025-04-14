@@ -1,11 +1,12 @@
 import json
-import language_tool_python
 import soundfile as sf
 from nlp_keywords import get_weighted_queries
 from smatch import semantic_smart_answer
 from transcribe import transcribe_audio  # Use the actual transcribe function
 import requests
 import boto3
+from transformers import pipeline
+
 from botocore.client import Config
 from queue import Queue
 from fetch_keywords import fetch_keywords
@@ -57,71 +58,148 @@ def generate_s3_link(bucket, s3_file, region):
     return s3_link
 
 
-# Initialize grammar checker
-tool = language_tool_python.LanguageTool('en-US')
-
-# Fetch the audio file from Google Drive (replace with actual file ID)
-google_drive_file_id = "13qfbbFB38m_5iqtJCpReEx29HWUV2cqp"  
-local_audio_file_path = "audio_file.mp3"
+# Fetch the audio file from Google Drive 
+google_drive_file_id = "1PaoqrhwPMB61DSdAc8jRMm_92HaORS9C"  
+local_audio_file_path = "audio_file1.mp3"
 download_file_from_google_drive(google_drive_file_id, local_audio_file_path)
 
 def split_audio_into_chunks(file_path, chunk_duration=300):
     """
     Splits the audio into chunks of specified duration (default: 5 minutes = 300 seconds).
-    Using soundfile to split the audio.
+    Using soundfile to split the audio with proper error handling.
     """
-    audio, sample_rate = sf.read(file_path)
-    chunk_size_samples = chunk_duration * sample_rate  # Convert duration in seconds to samples
+    try:
+        # Create output directory if it doesn't exist
+        import os
+        output_dir = "audio_chunks"
+        os.makedirs(output_dir, exist_ok=True)
 
-    chunks = []
-    for i in range(0, len(audio), chunk_size_samples):
-        chunk = audio[i:i + chunk_size_samples]
-        chunk_path = f"chunk_{i // chunk_size_samples}.wav"
-        sf.write(chunk_path, chunk, sample_rate)
-        chunks.append(chunk_path)
+        print("\n=== Processing Audio File ===")
+        print(f"Input file: {file_path}")
 
-        # Upload to S3 after splitting
-        s3_file_key = f"audio_chunks/{chunk_path}"
-        upload_success = upload_to_aws(chunk_path, s3_file_key, bucket="copyrvswaroop")
-        if upload_success:
-            print(f"Successfully uploaded chunk {chunk_path} to S3.")
-            s3_link = generate_s3_link("copyrvswaroop", s3_file_key, "ap-south-1")
-            print(f"S3 Link: {s3_link}")
-        else:
-            print(f"Failed to upload chunk {chunk_path} to S3.")
-    
-    return chunks
+        # Read the audio file
+        audio, sample_rate = sf.read(file_path)
+        chunk_size_samples = int(chunk_duration * sample_rate)
+        chunks = []
 
+        # Calculate total chunks needed
+        total_chunks = (len(audio) + chunk_size_samples - 1) // chunk_size_samples
+        print(f"Total chunks to process: {total_chunks}")
 
-def split_text(text, chunk_size=1000):
-    """Splits text into chunks of specified size (default ~1000 characters)."""
-    return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        for i in range(total_chunks):
+            try:
+                # Calculate chunk boundaries
+                start_idx = i * chunk_size_samples
+                end_idx = min(start_idx + chunk_size_samples, len(audio))
+                
+                # Extract chunk using proper slicing
+                chunk = audio[start_idx:end_idx]
+                
+                # Create chunk path and save
+                chunk_path = os.path.join(output_dir, f"chunk_{i}.wav")
+                sf.write(chunk_path, chunk, sample_rate)
+                chunks.append(chunk_path)
 
+                # Upload to S3 and get link
+                s3_file_key = f"audio_chunks/{os.path.basename(chunk_path)}"
+                upload_success = upload_to_aws(chunk_path, s3_file_key)
+                if upload_success:
+                    s3_link = generate_s3_link("copyrvswaroop", s3_file_key, "ap-south-1")
+                    print(f"Processed chunk {i+1}/{total_chunks}:")
+                    print(f"  - File: {chunk_path}")
+                    print(f"  - S3 Link: {s3_link}\n")
+                
+            except Exception as e:
+                print(f"Error processing chunk {i+1}/{total_chunks}: {str(e)}")
+                continue
+        
+        print("=== Audio Processing Complete ===\n")
+        return chunks
 
-def correct_grammar(transcript: str) -> str:
-    """Corrects grammar using LanguageTool in chunks to avoid overload."""
-    chunks = split_text(transcript, chunk_size=1000)  # Adjust size if needed
-    corrected_chunks = [tool.correct(chunk) for chunk in chunks]
-    return " ".join(corrected_chunks)
-
+    except Exception as e:
+        print(f"Error in split_audio_into_chunks: {str(e)}")
+        return []
 
 def normalize_keyword(keyword: str) -> str:
     """Normalize the keyword by lowercasing and removing punctuation."""
     import re
     return re.sub(r'[^\w\s]', '', keyword.lower()).strip()
 
+def count_questions_in_transcript(transcript: str) -> int:
+    """
+    Counts the number of questions in the transcript using simple regex patterns.
+    A question is identified by:
+    1. Presence of a question mark
+    2. Starting with common question words
+    """
+    import re
+    
+    # Split into sentences
+    sentences = re.split('[.!?]', transcript)
+    question_count = 0
+    
+    # Common question patterns
+    question_patterns = [
+        r'\?$',  # Ends with question mark
+        r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
+    ]
+    
+    for sentence in sentences:
+        sentence = sentence.strip().lower()
+        if not sentence:
+            continue
+            
+        # Check if sentence matches any question pattern
+        for pattern in question_patterns:
+            if re.search(pattern, sentence, re.IGNORECASE):
+                question_count += 1
+                break
+    
+    return question_count
+
+# Load a pre-trained pipeline for text classification
+question_classifier = pipeline("text-classification", model="distilbert-base-uncased")
+
+def count_questions_with_transformers(transcript: str) -> int:
+    """
+    Counts the number of questions in the transcript using Hugging Face Transformers.
+    A question is identified based on the model's classification.
+    """
+    sentences = transcript.split(".")  # Split transcript into sentences
+    question_count = 0
+
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        # Ensure the sentence length is within the model's token limit
+        if len(sentence) > 512:
+            print(f"Skipping long sentence: {sentence[:50]}... (length: {len(sentence)})")
+            continue
+
+        # Use the classifier to predict if the sentence is a question
+        result = question_classifier(sentence)
+        if "?" in sentence or result[0]["label"] == "QUESTION":  # Adjust label based on the model
+            question_count += 1
+
+    return question_count
 
 def process_audio_chunks(file_path):
     chunks = split_audio_into_chunks(file_path)
+    if not chunks:
+        print("Error: No audio chunks were created")
+        return set(), 0  # Return empty set for keywords and 0 for questions
+    
     transcript_queue = Queue()
     
     for chunk_path in chunks:
         transcript = transcribe_audio(chunk_path)
         if transcript:
-            transcript_queue.put(correct_grammar(transcript))
+            transcript_queue.put(transcript)  # Direct transcript without correction
         else:
             transcript_queue.put("")
-    
+
     processed_transcripts = []
     temp_transcript = ""
     
@@ -137,57 +215,120 @@ def process_audio_chunks(file_path):
         processed_transcripts.append(temp_transcript.strip())
     
     extracted_keywords = set()
+    total_questions = 0  # Initialize question count
     
     for transcript in processed_transcripts:
         subject = "computer science"
         level = "computer science"
         _, phrasescorelist, _, _ = get_weighted_queries(transcript, len(transcript), subject, level)
         extracted_keywords.update(normalize_keyword(kw[0]) for kw in phrasescorelist)
+        
+        # Use the simpler question counting method
+        total_questions += count_questions_in_transcript(transcript)
     
-    return extracted_keywords
+    print(f"Total Questions Asked in Class: {total_questions}")
+    return extracted_keywords, total_questions
 
 
-corrected_transcript_keywords = process_audio_chunks("audio_file.mp3")
-print("Extracted Keywords:", corrected_transcript_keywords)
+# Process the audio file and extract keywords
+corrected_transcript_keywords, total_questions = process_audio_chunks("audio_file.mp3")
+
+if corrected_transcript_keywords:  # Only proceed if we have keywords
+    # Fetching keywords from fetch_keywords.py (silently)
+    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
+    flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
+
+    # Semantic Matching
+    semantic_result = semantic_smart_answer(
+        student_answer=" ".join(corrected_transcript_keywords),
+        question=(
+            "Analyze the transcript and compare it with the expected lecture topics. "
+            "Focus on key concepts rather than exact word matches. "
+            "Recognize synonyms, paraphrasing, and related terminology. "
+            "Ensure that essential topics are covered, and penalize missing core concepts while allowing variations in phrasing. "
+            "If similar words or phrases convey the same meaning, consider them a match. "
+            "Provide a semantic similarity score based on concept coverage, relevance, and accuracy."
+        ),
+        answer=" ".join(flat_keywords),
+        details=1
+    )
+
+    # Debugging: Print the inputs to the API
+    print("\nDebug: Inputs to Semantic Matching API:")
+    print(f"Student Answer: {corrected_transcript_keywords}")
+    print(f"Answer: {flat_keywords}")
+
+    # Debugging: Print the raw semantic_result
+    print("\nDebug: Raw Semantic Result:")
+    print(semantic_result)
+
+    # Parse and display the results
+    try:
+        # Check if semantic_result is a string and needs parsing
+        if isinstance(semantic_result, str):
+            response = json.loads(semantic_result)  # Parse the semantic_result into a dictionary
+        else:
+            response = semantic_result  # Use it directly if it's already a dictionary
+
+        # Parse the nested JSON string inside the "content" field
+        if isinstance(response['content'], str):
+            try:
+                # Extract the JSON part from the content field
+                content_start = response['content'].find("{")
+                if content_start != -1:
+                    response['content'] = json.loads(response['content'][content_start:])
+                else:
+                    raise ValueError("No JSON object found in 'content' field")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error decoding nested JSON in 'content': {e}")
+                print(f"Raw 'content' field: {response['content']}")
+                response['content'] = {
+                    "answer_match": "0%",
+                    "missing_concepts": [],
+                    "additional_concepts": [],
+                    "reasons": "Error parsing the 'content' field."
+                }
+
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        print(f"Raw semantic_result: {semantic_result}")
+        response = {"content": {"answer_match": "0%", "missing_concepts": [], "additional_concepts": [], "reasons": ""}}
+
+    # Debugging: Print the parsed response
+    print("\nDebug: Parsed Response from API:")
+    print(json.dumps(response, indent=4))  # Pretty print the response
+
+    # Extract details from the response
+    try:
+        answer_match = response['content'].get('answer_match', "0%")
+        missing_concepts = response['content'].get('missing_concepts', [])
+        additional_concepts = response['content'].get('additional_concepts', [])
+        reasons = response['content'].get('reasons', "")
+    except (KeyError, IndexError, AttributeError) as e:
+        print(f"Error extracting details from response: {e}")
+        answer_match = "0%"
+        missing_concepts = []
+        additional_concepts = []
+        reasons = ""
+
+    print("\n=== Lecture Analysis ===")
+    print(f"Answer Match: {answer_match}")
+    print("Missing Keywords:")
+    for idx, keyword in enumerate(missing_concepts, 1):
+        print(f"{idx}. {keyword}")
+
+    print("\nAdditional Concepts:")
+    for idx, concept in enumerate(additional_concepts, 1):
+        print(f"{idx}. {concept}")
+
+    print("\nReasons:")
+    print(reasons)
+
+    print(f"\nTotal Questions Asked: {total_questions}")
+    print("=====================")
+
+else:
+    print("Error: Could not process audio file")
 
 
-# Fetching keywords from fetch_keywords.py
-# Using 'Oy4duAOGdWQ' as video_id in this case
-hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
-flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]  # Flatten the list of tuples
 
-# Step 4: Semantic Matching
-semantic_result = semantic_smart_answer(
-    student_answer=" ".join(corrected_transcript_keywords),
-    question=(
-        "Analyze the transcript and compare it with the expected lecture topics. "
-        "Focus on key concepts rather than exact word matches. "
-        "Recognize synonyms, paraphrasing, and related terminology. "
-        "Ensure that essential topics are covered, and penalize missing core concepts while allowing variations in phrasing. "
-        "If similar words or phrases convey the same meaning, consider them a match. "
-        "Provide a semantic similarity score based on concept coverage, relevance, and accuracy."
-    ),
-    answer=" ".join(flat_keywords),
-    details=1  # Request all details (includes missing, additional keywords, and reasons)
-)
-
-# Parse the response and display relevant information
-response = json.loads(semantic_result)
-
-# Extract all the relevant details from the response
-answer_match = response['content'][0]['answer_match']
-missing_concepts = response['content'][0]['missing_concepts']
-additional_concepts = response['content'][0]['additional_concepts']
-reasons = response['content'][0]['reasons']
-
-# Compute missed and extra keywords manually
-missed_keywords = [kw for kw in corrected_transcript_keywords if kw not in missing_concepts]
-extra_keywords = [kw for kw in flat_keywords if kw not in additional_concepts]
-
-# Print all the details
-print(f"Answer Match: {answer_match}")
-print(f"Key Phrases Missing in Student Answer Present in Trainer Answer: {', '.join(missing_concepts)}")
-print(f"Key Phrases Mentioned in Student Answer Not in Trainer Answer: {', '.join(additional_concepts)}")
-print(f"Missed Keywords: {', '.join(missed_keywords)}")
-print(f"Extra Keywords: {', '.join(extra_keywords)}")
-print(f"Reasons: {reasons}")

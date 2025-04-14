@@ -9,11 +9,15 @@ def fetch_keywords(video_id):
     adhoc_cursor.execute(query, (video_id,))
     result = adhoc_cursor.fetchall()
 
-    print("Critical keywords:", result)
+    # Flatten the list of tuples into a list of keywords
+    keywords = [row[0] for row in result]
+
+    print("Critical keywords:", keywords)
     
     adhoc_cursor.close()
     adhoc_db.close()
-    return result
+    return keywords
 
 
+# Example usage
 keywords = fetch_keywords('Oy4duAOGdWQ')
