@@ -1,3 +1,4 @@
+
 import requests
 import json
 import re
@@ -15,7 +16,7 @@ def semantic_smart_answer(student_answer: str, question: str, answer: str, detai
         "Provide the following details in JSON format: "
         "{"
         "\"answer_match\": \"<percentage value>\", "
-        "\"missing_concepts\": [\"<list of key phrases missing in the student's answer>\"], "
+        "\"missing_concepts\": [\"<list of key phrases missing in the student's answer,provide only the concepts that are technically related, if synonyms are present do not include it as missing_concepts>\"], "
         "\"additional_concepts\": [\"<list of key phrases present in the student's answer but not in the correct answer>\"], "
         "\"reasons\": \"<explanation of the semantic match>\""
         "}."

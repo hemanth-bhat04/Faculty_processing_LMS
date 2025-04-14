@@ -9,7 +9,7 @@ from transformers import pipeline
 
 from botocore.client import Config
 from queue import Queue
-from fetch_keywords import fetch_keywords
+from fetch_keywords import fetch_keywords, fetch_all_keywords
 s3 = boto3.client('s3',
                   aws_access_key_id="AKIA43Y7V2OHU52XAOHQ",
                   aws_secret_access_key="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",
@@ -59,13 +59,13 @@ def generate_s3_link(bucket, s3_file, region):
 
 
 # Fetch the audio file from Google Drive 
-google_drive_file_id = "1PaoqrhwPMB61DSdAc8jRMm_92HaORS9C"  
+google_drive_file_id = "1LonTXNj_rtUujpt7vs3XnpHnkjrYkw7y"  
 local_audio_file_path = "audio_file1.mp3"
 download_file_from_google_drive(google_drive_file_id, local_audio_file_path)
 
-def split_audio_into_chunks(file_path, chunk_duration=300):
+def split_audio_into_chunks(file_path, chunk_duration=240):
     """
-    Splits the audio into chunks of specified duration (default: 5 minutes = 300 seconds).
+    Splits the audio into chunks of specified duration (default: 4 minutes = 240 seconds).
     Using soundfile to split the audio with proper error handling.
     """
     try:
@@ -173,26 +173,36 @@ def count_questions_with_transformers(transcript: str) -> int:
         if not sentence:
             continue
 
-        # Ensure the sentence length is within the model's token limit
+        # Handle long sentences by splitting them into smaller chunks
         if len(sentence) > 512:
-            print(f"Skipping long sentence: {sentence[:50]}... (length: {len(sentence)})")
-            continue
+            print(f"Splitting long sentence: {sentence[:50]}... (length: {len(sentence)})")
+            # Split the sentence into smaller chunks (e.g., by words)
+            words = sentence.split()
+            chunks = [" ".join(words[i:i + 50]) for i in range(0, len(words), 50)]  # Split into chunks of 50 words
+        else:
+            chunks = [sentence]
 
-        # Use the classifier to predict if the sentence is a question
-        result = question_classifier(sentence)
-        if "?" in sentence or result[0]["label"] == "QUESTION":  # Adjust label based on the model
-            question_count += 1
+        for chunk in chunks:
+            try:
+                # Use the classifier to predict if the chunk is a question
+                result = question_classifier(chunk)
+                if "?" in chunk or result[0]["label"] == "QUESTION":  # Adjust label based on the model
+                    question_count += 1
+            except Exception as e:
+                print(f"Error processing chunk: {chunk[:50]}... - {e}")
 
     return question_count
 
 def process_audio_chunks(file_path):
+    # Split the audio file into smaller chunks
     chunks = split_audio_into_chunks(file_path)
     if not chunks:
         print("Error: No audio chunks were created")
-        return set(), 0  # Return empty set for keywords and 0 for questions
-    
+        return [], 0, set(), set(), []  # Return empty sets for keywords and missed keywords, and 0 for questions
+
     transcript_queue = Queue()
-    
+
+    # Process each chunk individually
     for chunk_path in chunks:
         transcript = transcribe_audio(chunk_path)
         if transcript:
@@ -202,50 +212,39 @@ def process_audio_chunks(file_path):
 
     processed_transcripts = []
     temp_transcript = ""
-    
+
     while not transcript_queue.empty():
         chunk_transcript = transcript_queue.get()
         temp_transcript += " " + chunk_transcript.strip()
-        
+
         if len(temp_transcript.split()) > 10:
             processed_transcripts.append(temp_transcript.strip())
             temp_transcript = ""
-    
+
     if temp_transcript.strip():
         processed_transcripts.append(temp_transcript.strip())
-    
-    # In process_audio_chunks, before analyzing questions
+
+    # Combine all transcripts into a single transcript
     complete_transcript = " ".join(processed_transcripts)
     print(f"\nDEBUG - Complete Transcript Length: {len(complete_transcript)}")
     if len(complete_transcript) < 100:  # If transcript is suspiciously short
         print("WARNING: Transcript might be empty or too short")
-    
-    # Replace the call to analyze_questions with count_questions_with_transformers
+
+    # Count questions in the transcript
     question_count = count_questions_with_transformers(complete_transcript)
-    questions_list = []  # Optionally, you can extract the list of questions if needed
+
+    # Placeholder for missed keywords (you can implement the logic if needed)
+    primary_missed_keywords = set()  # Replace with actual logic if required
+    secondary_missed_keywords = set()  # Replace with actual logic if required
+    top_10_secondary_missed_keywords = []  # Replace with actual logic if required
 
     print("\nQuestion Analysis Results:")
     print(f"Total questions asked: {question_count}")
-        
-    
-    extracted_keywords = set()
-    total_questions = 0  # Initialize question count
-    
-    for transcript in processed_transcripts:
-        subject = "computer science"
-        level = "computer science"
-        _, phrasescorelist, _, _ = get_weighted_queries(transcript, len(transcript), subject, level)
-        extracted_keywords.update(normalize_keyword(kw[0]) for kw in phrasescorelist)
-        
-        # Use the simpler question counting method
-        total_questions += count_questions_in_transcript(transcript)
-    
-    print(f"Total Questions Asked in Class: {total_questions}")
-    return extracted_keywords, total_questions
 
+    return processed_transcripts, question_count, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords
 
 # Process the audio file and extract keywords
-corrected_transcript_keywords, total_questions = process_audio_chunks("audio_file.mp3")
+corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks("audio_file.mp3")
 
 if corrected_transcript_keywords:  # Only proceed if we have keywords
     # Fetching keywords from fetch_keywords.py (silently)
@@ -266,15 +265,6 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
         answer=" ".join(flat_keywords),
         details=1
     )
-
-    # Debugging: Print the inputs to the API
-    print("\nDebug: Inputs to Semantic Matching API:")
-    print(f"Student Answer: {corrected_transcript_keywords}")
-    print(f"Answer: {flat_keywords}")
-
-    # Debugging: Print the raw semantic_result
-    print("\nDebug: Raw Semantic Result:")
-    print(semantic_result)
 
     # Parse and display the results
     try:
@@ -327,14 +317,28 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
 
     print("\n=== Lecture Analysis ===")
     print(f"Answer Match: {answer_match}")
-    print("Missing Keywords:")
+
+    # Print Primary Missed Keywords
+    print("\nPrimary Missed Keywords (Most Important):")
+    for idx, keyword in enumerate(primary_missed_keywords, 1):
+        print(f"{idx}. {keyword}")
+
+    # Print Top 10 Secondary Missed Keywords (Based on Importance)
+    print("\nTop 10 Secondary Missed Keywords (Based on Importance):")
+    for idx, keyword in enumerate(top_10_secondary_missed_keywords, 1):
+        print(f"{idx}. {keyword}")
+
+    # Print Missing Keywords
+    print("\nMissing Keywords:")
     for idx, keyword in enumerate(missing_concepts, 1):
         print(f"{idx}. {keyword}")
 
-    print("\nAdditional Concepts:")
-    for idx, concept in enumerate(additional_concepts, 1):
-        print(f"{idx}. {concept}")
+    # Print Additional Concepts
+    #print("\nAdditional Concepts:")
+    #for idx, concept in enumerate(additional_concepts, 1):
+        #print(f"{idx}. {concept}")
 
+    # Print Reasons
     print("\nReasons:")
     print(reasons)
 
