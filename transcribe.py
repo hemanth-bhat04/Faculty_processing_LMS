@@ -13,7 +13,8 @@ def transcribe_audio(file_path):
             options = PrerecordedOptions(
                 model="nova",  # Use a simpler model
                 language="en-US",
-                diarize=False  # Disable diarization if not required
+                diarize=False,
+                 punctuate=True # Disable diarization if not required
             )
 
             response = deepgram.listen.prerecorded.v('1').transcribe_file(payload, options)
