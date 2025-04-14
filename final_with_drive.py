@@ -220,13 +220,12 @@ def process_audio_chunks(file_path):
     if len(complete_transcript) < 100:  # If transcript is suspiciously short
         print("WARNING: Transcript might be empty or too short")
     
-    # Analyze questions in the complete transcript
-    question_count, questions_list = analyze_questions(complete_transcript)
+    # Replace the call to analyze_questions with count_questions_with_transformers
+    question_count = count_questions_with_transformers(complete_transcript)
+    questions_list = []  # Optionally, you can extract the list of questions if needed
+
     print("\nQuestion Analysis Results:")
     print(f"Total questions asked: {question_count}")
-    print("\nQuestions found:")
-    for i, question in enumerate(questions_list, 1):
-        print(f"{i}. {question}")
         
     
     extracted_keywords = set()
