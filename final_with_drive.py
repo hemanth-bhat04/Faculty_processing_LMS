@@ -214,6 +214,21 @@ def process_audio_chunks(file_path):
     if temp_transcript.strip():
         processed_transcripts.append(temp_transcript.strip())
     
+    # In process_audio_chunks, before analyzing questions
+    complete_transcript = " ".join(processed_transcripts)
+    print(f"\nDEBUG - Complete Transcript Length: {len(complete_transcript)}")
+    if len(complete_transcript) < 100:  # If transcript is suspiciously short
+        print("WARNING: Transcript might be empty or too short")
+    
+    # Analyze questions in the complete transcript
+    question_count, questions_list = analyze_questions(complete_transcript)
+    print("\nQuestion Analysis Results:")
+    print(f"Total questions asked: {question_count}")
+    print("\nQuestions found:")
+    for i, question in enumerate(questions_list, 1):
+        print(f"{i}. {question}")
+        
+    
     extracted_keywords = set()
     total_questions = 0  # Initialize question count
     
