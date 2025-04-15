@@ -40,4 +40,4 @@ def fetch_all_keywords(video_id):
     return all_keywords
 
 # Example usage
-keywords = fetch_keywords('0dP-YtYZREU')
+keywords = fetch_keywords('Oy4duAOGdWQ')

@@ -68,7 +68,7 @@ def generate_s3_link(bucket, s3_file, region):
 
 
 # Fetch the audio file from Google Drive 
-google_drive_file_id = "1boYLtWk54V6Wtv--Kb7HjAjWh6JZBQTW"  
+google_drive_file_id = "13qfbbFB38m_5iqtJCpReEx29HWUV2cqp"  
 local_audio_local_audio_file_path = "audio_file2.mp3"
 print(f"Downloading new file with ID: {google_drive_file_id}")
 download_file_from_google_drive(google_drive_file_id, local_audio_local_audio_file_path)
@@ -247,28 +247,33 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     flat_keywords = []
 
     # Fetch keywords dynamically based on the current audio file or transcript
-    hardcoded_keywords = fetch_keywords('0dP-YtYZREU')  # Replace with dynamic input if needed
+    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
     flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
 
     # Semantic Matching
     semantic_result = semantic_smart_answer(
-        student_answer=" ".join(corrected_transcript_keywords),
-        question=(
-            "Compare the keywords extracted from the trainer's lesson with the suggested content. "
-            "Focus on whether the trainer's lesson covers the key concepts present in the suggested content. "
-            "Treat synonyms or paraphrased concepts as matches and ignore minor differences such as phrasing, punctuation, or formatting. "
-            "Provide a semantic similarity score based on concept coverage, relevance, and accuracy. "
-            "Provide the following details in JSON format: "
-            "{"
-            "\"answer_match\": \"<percentage value>\", "
-            "\"missing_concepts\": [\"<list of key phrases or concepts present in the suggested content but not covered in the trainer's lesson. Do not include synonyms or paraphrased concepts as missing.>\"], "
-            "\"additional_concepts\": [\"<list of key phrases or concepts present in the trainer's lesson but not in the suggested content. Include only technically relevant concepts.>\"], "
-            "\"reasons\": \"<detailed explanation of the semantic match, including why certain concepts were considered missing or additional. Provide reasoning for the percentage match.>\""
-            "}."
-        ),
-        answer=" ".join(flat_keywords),
-        details=1
-    )
+    student_answer=" ".join(corrected_transcript_keywords),
+    question=(
+        "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
+        "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
+        "Only include **critical concepts** that are central to understanding the topic in the list of missing concepts. "
+        "Do not list superficial or highly specific terms as missing if the overall concept is conveyed. "
+        "Also, include additional concepts only if they introduce **new technical ideas** not present in the correct answer. "
+        "Avoid penalizing extra elaboration if it supports the main idea. "
+        "Ensure the output is deterministic — consistent results should be produced for the same input. "
+        "Provide a semantic similarity score that reflects conceptual understanding — not word-level overlap. "
+        "Output in the following JSON format: "
+        "{"
+        "\"answer_match\": \"<percentage value>\", "
+        "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
+        "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer>\"], "
+        "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
+        "}."
+    ),
+    answer=" ".join(flat_keywords),
+    details=1
+)
+
 
     # Parse and display the results
     try:
