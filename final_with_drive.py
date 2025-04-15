@@ -68,7 +68,7 @@ def generate_s3_link(bucket, s3_file, region):
 
 
 # Fetch the audio file from Google Drive 
-google_drive_file_id = "1JIcVbTGjJB8si7r59UnOFBsPkFLmd--s"  
+google_drive_file_id = "1boYLtWk54V6Wtv--Kb7HjAjWh6JZBQTW"  
 local_audio_local_audio_file_path = "audio_file2.mp3"
 print(f"Downloading new file with ID: {google_drive_file_id}")
 download_file_from_google_drive(google_drive_file_id, local_audio_local_audio_file_path)
@@ -238,24 +238,33 @@ def process_audio_chunks(local_audio_file_path):
 
     return processed_transcripts, question_count, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords
 
-# Use the dynamically downloaded file path in the process_audio_chunks function
+# Process the audio file and extract keywords
 corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
 if corrected_transcript_keywords:  # Only proceed if we have keywords
-    # Fetching keywords from fetch_keywords.py (silently)
-    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
+    # Clear previous keywords
+    critical_keywords = []
+    flat_keywords = []
+
+    # Fetch keywords dynamically based on the current audio file or transcript
+    hardcoded_keywords = fetch_keywords('0dP-YtYZREU')  # Replace with dynamic input if needed
     flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
 
     # Semantic Matching
     semantic_result = semantic_smart_answer(
         student_answer=" ".join(corrected_transcript_keywords),
         question=(
-            "Analyze the transcript and compare it with the expected lecture topics. "
-            "Focus on key concepts rather than exact word matches. "
-            "Recognize synonyms, paraphrasing, and related terminology. "
-            "Ensure that essential topics are covered, and penalize missing core concepts while allowing variations in phrasing. "
-            "If similar words or phrases convey the same meaning, consider them a match. "
-            "Provide a semantic similarity score based on concept coverage, relevance, and accuracy."
+            "Compare the keywords extracted from the trainer's lesson with the suggested content. "
+            "Focus on whether the trainer's lesson covers the key concepts present in the suggested content. "
+            "Treat synonyms or paraphrased concepts as matches and ignore minor differences such as phrasing, punctuation, or formatting. "
+            "Provide a semantic similarity score based on concept coverage, relevance, and accuracy. "
+            "Provide the following details in JSON format: "
+            "{"
+            "\"answer_match\": \"<percentage value>\", "
+            "\"missing_concepts\": [\"<list of key phrases or concepts present in the suggested content but not covered in the trainer's lesson. Do not include synonyms or paraphrased concepts as missing.>\"], "
+            "\"additional_concepts\": [\"<list of key phrases or concepts present in the trainer's lesson but not in the suggested content. Include only technically relevant concepts.>\"], "
+            "\"reasons\": \"<detailed explanation of the semantic match, including why certain concepts were considered missing or additional. Provide reasoning for the percentage match.>\""
+            "}."
         ),
         answer=" ".join(flat_keywords),
         details=1
