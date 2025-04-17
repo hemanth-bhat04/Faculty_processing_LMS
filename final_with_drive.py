@@ -5,7 +5,7 @@ from smatch import semantic_smart_answer
 from transcribe import transcribe_audio  # Use the actual transcribe function
 import requests
 import boto3
-from transformers import pipeline
+#from transformers import pipeline
 
 from botocore.client import Config
 from queue import Queue
