@@ -150,7 +150,7 @@ def count_questions_in_transcript(transcript: str) -> int:
     
     # Common question patterns
     question_patterns = [
-        r'\?$',  # Ends with question mark
+        #r'\?$',  # Ends with question mark --double check if needed or not
         r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
     ]
     
@@ -238,86 +238,20 @@ def process_audio_chunks(local_audio_file_path):
 
     return processed_transcripts, question_count, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords
 
-from local_dynamic_critical_all_keywords import JunkWordProcessor
-from difflib import get_close_matches
-
-# Initialize JunkWordProcessor
-junk_processor = JunkWordProcessor()
-
-# Function to rank and filter missed keywords
-def get_primary_missed_keywords(corrected_keywords, critical_keywords, top_n=10):
-    """
-    Identify the most important missed keywords using ranking and filtering.
-    """
-    # Normalize keywords
-    corrected_keywords = {junk_processor.normalize_keyword(kw) for kw in corrected_keywords}
-    critical_keywords = {junk_processor.normalize_keyword(kw) for kw in critical_keywords}
-
-    # Filter out junk keywords from critical keywords
-    critical_keywords = {kw for kw in critical_keywords if kw not in junk_processor.junk_keywords}
-
-    # Find missed keywords
-    missed_keywords = critical_keywords - corrected_keywords
-
-    # Rank missed keywords by closeness to corrected keywords
-    ranked_missed_keywords = []
-    for missed in missed_keywords:
-        # Find the closest match in corrected keywords
-        closest_match = get_close_matches(missed, corrected_keywords, n=1, cutoff=0.6)
-        similarity_score = len(closest_match[0]) if closest_match else 0  # Use length as a simple score
-        ranked_missed_keywords.append((missed, similarity_score))
-
-    # Sort by similarity score (descending) and return the top N
-    ranked_missed_keywords.sort(key=lambda x: x[1], reverse=True)
-    return [kw for kw, _ in ranked_missed_keywords[:top_n]]
-
 # Process the audio file and extract keywords
 corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
-# Ensure corrected_transcript_keywords is not empty
-if not corrected_transcript_keywords:
-    print("Error: No keywords extracted from the transcript.")
-    corrected_transcript_keywords = []
-
-# Fetch critical_all_keywords dynamically
-try:
-    critical_all_keywords = fetch_all_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
-except Exception as e:
-    print(f"Error fetching critical_all_keywords: {e}")
-    critical_all_keywords = []
-
-# Fetch hardcoded_keywords dynamically
-try:
-    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
-    flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
-except Exception as e:
-    print(f"Error fetching hardcoded_keywords: {e}")
+if corrected_transcript_keywords:  # Only proceed if we have keywords
+    # Clear previous keywords
+    critical_keywords = []
     flat_keywords = []
 
-# Get the top 10 primary missed keywords
-primary_missed_keywords = get_primary_missed_keywords(corrected_transcript_keywords, critical_all_keywords, top_n=10)
+    # Fetch keywords dynamically based on the current audio file or transcript
+    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
+    flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
 
-# Populate top_10_secondary_missed_keywords based on secondary_missed_keywords
-top_10_secondary_missed_keywords = list(secondary_missed_keywords)[:10]  # Adjust logic as needed
-
-# Debug: Print Primary Missed Keywords
-print("\nPrimary Missed Keywords (Most Important):")
-if primary_missed_keywords:
-    for idx, keyword in enumerate(primary_missed_keywords, 1):
-        print(f"{idx}. {keyword}")
-else:
-    print("No primary missed keywords detected.")
-
-# Debug: Print Secondary Missed Keywords
-print("\nSecondary Missed Keywords:")
-if secondary_missed_keywords:
-    for idx, keyword in enumerate(secondary_missed_keywords, 1):
-        print(f"{idx}. {keyword}")
-else:
-    print("No secondary missed keywords detected.")
-
-# Semantic Matching
-semantic_result = semantic_smart_answer(
+    # Semantic Matching
+    semantic_result = semantic_smart_answer(
     student_answer=" ".join(corrected_transcript_keywords),
     question=(
         "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
@@ -340,68 +274,88 @@ semantic_result = semantic_smart_answer(
     details=1
 )
 
-# Parse and display the results
-try:
-    if isinstance(semantic_result, str):
-        response = json.loads(semantic_result)
-    else:
-        response = semantic_result
 
-    if isinstance(response['content'], str):
-        try:
-            content_start = response['content'].find("{")
-            if content_start != -1:
-                response['content'] = json.loads(response['content'][content_start:])
-            else:
-                raise ValueError("No JSON object found in 'content' field")
-        except (json.JSONDecodeError, ValueError) as e:
-            print(f"Error decoding nested JSON in 'content': {e}")
-            response['content'] = {
-                "answer_match": "0%",
-                "missing_concepts": [],
-                "additional_concepts": [],
-                "reasons": "Error parsing the 'content' field."
-            }
+    # Parse and display the results
+    try:
+        # Check if semantic_result is a string and needs parsing
+        if isinstance(semantic_result, str):
+            response = json.loads(semantic_result)  # Parse the semantic_result into a dictionary
+        else:
+            response = semantic_result  # Use it directly if it's already a dictionary
 
-    answer_match = response['content'].get('answer_match', "0%")
-    missing_concepts = response['content'].get('missing_concepts', [])
-    additional_concepts = response['content'].get('additional_concepts', [])
-    reasons = response['content'].get('reasons', "")
+        # Parse the nested JSON string inside the "content" field
+        if isinstance(response['content'], str):
+            try:
+                # Extract the JSON part from the content field
+                content_start = response['content'].find("{")
+                if content_start != -1:
+                    response['content'] = json.loads(response['content'][content_start:])
+                else:
+                    raise ValueError("No JSON object found in 'content' field")
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"Error decoding nested JSON in 'content': {e}")
+                print(f"Raw 'content' field: {response['content']}")
+                response['content'] = {
+                    "answer_match": "0%",
+                    "missing_concepts": [],
+                    "additional_concepts": [],
+                    "reasons": "Error parsing the 'content' field."
+                }
+
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}")
+        print(f"Raw semantic_result: {semantic_result}")
+        response = {"content": {"answer_match": "0%", "missing_concepts": [], "additional_concepts": [], "reasons": ""}}
+
+    # Debugging: Print the parsed response
+    print("\nDebug: Parsed Response from API:")
+    print(json.dumps(response, indent=4))  # Pretty print the response
+
+    # Extract details from the response
+    try:
+        answer_match = response['content'].get('answer_match', "0%")
+        missing_concepts = response['content'].get('missing_concepts', [])
+        additional_concepts = response['content'].get('additional_concepts', [])
+        reasons = response['content'].get('reasons', "")
+    except (KeyError, IndexError, AttributeError) as e:
+        print(f"Error extracting details from response: {e}")
+        answer_match = "0%"
+        missing_concepts = []
+        additional_concepts = []
+        reasons = ""
 
     print("\n=== Lecture Analysis ===")
     print(f"Answer Match: {answer_match}")
 
-    # Refine Primary Missed Keywords Based on Match Score
-    match_score = float(answer_match.strip('%'))
-    if match_score >= 95:
-        print("\nHigh match score detected (>= 95%). Filtering primary missed keywords to top 5...")
-        primary_missed_keywords = primary_missed_keywords[:2]  # Limit to top 2 for high match scores
-    elif match_score >= 90:
-        print("\nModerate match score detected (>= 90%). Filtering primary missed keywords to top 3...")
-        primary_missed_keywords = primary_missed_keywords[:3]  # Limit to top 3 for moderate match scores
-    else:
-        print("\nMatch score below 90%. Displaying all primary missed keywords...")
+    # Print Primary Missed Keywords
+    print("\nPrimary Missed Keywords (Most Important):")
+    for idx, keyword in enumerate(primary_missed_keywords, 1):
+        print(f"{idx}. {keyword}")
 
-    # Consolidated printing of missed keywords
-    print("\nPrimary Missed Keywords (Filtered):")
-    if primary_missed_keywords:
-        for idx, keyword in enumerate(primary_missed_keywords, 1):
-            print(f"{idx}. {keyword}")
-    else:
-        print("No primary missed keywords detected.")
+    # Print Top 10 Secondary Missed Keywords (Based on Importance)
+    print("\nTop 10 Secondary Missed Keywords (Based on Importance):")
+    for idx, keyword in enumerate(top_10_secondary_missed_keywords, 1):
+        print(f"{idx}. {keyword}")
 
-    print("\nSecondary Missed Keywords:")
-    if secondary_missed_keywords:
-        for idx, keyword in enumerate(secondary_missed_keywords, 1):
-            print(f"{idx}. {keyword}")
-    else:
-        print("No secondary missed keywords detected.")
+    # Print Missing Keywords
+    print("\nMissing Keywords:")
+    for idx, keyword in enumerate(missing_concepts, 1):
+        print(f"{idx}. {keyword}")
 
+    # Print Additional Concepts
+    #print("\nAdditional Concepts:")
+    #for idx, concept in enumerate(additional_concepts, 1):
+        #print(f"{idx}. {concept}")
+
+    # Print Reasons
     print("\nReasons:")
     print(reasons)
 
-except Exception as e:
-    print(f"Error parsing semantic result: {e}")
+    print(f"\nTotal Questions Asked: {total_questions}")
+    print("=====================")
+
+else:
+    print("Error: Could not process audio file")
 
 
 
