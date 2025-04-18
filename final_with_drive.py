@@ -238,6 +238,31 @@ def process_audio_chunks(local_audio_file_path):
 
     return processed_transcripts, question_count, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords
 
+def compare_keywords(critical_all_keywords, dynamic_critical_keywords):
+    """
+    Compare two lists of keywords and return common, missing, and unique keywords.
+    """
+    # Convert lists to sets for efficient comparison
+    critical_all_set = set(critical_all_keywords)
+    dynamic_critical_set = set(dynamic_critical_keywords)
+
+    # Find common keywords
+    common_keywords = critical_all_set & dynamic_critical_set
+
+    # Find keywords missing in dynamic_critical_keywords
+    missing_in_dynamic = critical_all_set - dynamic_critical_set
+
+    # Find keywords unique to dynamic_critical_keywords
+    unique_to_dynamic = dynamic_critical_set - critical_all_set
+
+    # Return the results as a dictionary
+    return {
+        "common_keywords": sorted(common_keywords),
+        "missing_in_dynamic": sorted(missing_in_dynamic),
+        "unique_to_dynamic": sorted(unique_to_dynamic),
+    }
+
+
 # Process the audio file and extract keywords
 corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
@@ -250,30 +275,39 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
     flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
 
+    # Use dynamic_critical_keywords to unionize all 5-minute keywords into one sorted list
+    try:
+        video_id = 'Oy4duAOGdWQ'  # Use the same video_id as in fetch_keywords
+        dynamic_critical_keywords = fetch_all_keywords(video_id)  # Pass the video_id to fetch_all_keywords
+        critical_keywords = sorted(set(dynamic_critical_keywords))  # Unionize and sort the keywords
+        print(f"Dynamic Critical Keywords: {critical_keywords}")
+    except Exception as e:
+        print(f"Error fetching dynamic critical keywords: {e}")
+        critical_keywords = []  # Fallback to an empty list if there's an error
+
     # Semantic Matching
     semantic_result = semantic_smart_answer(
-    student_answer=" ".join(corrected_transcript_keywords),
-    question=(
-        "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
-        "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
-        "Only include **critical concepts** that are central to understanding the topic in the list of missing concepts. "
-        "Do not list superficial or highly specific terms as missing if the overall concept is conveyed. "
-        "Also, include additional concepts only if they introduce **new technical ideas** not present in the correct answer. "
-        "Avoid penalizing extra elaboration if it supports the main idea. "
-        "Ensure the output is deterministic — consistent results should be produced for the same input. "
-        "Provide a semantic similarity score that reflects conceptual understanding — not word-level overlap. "
-        "Output in the following JSON format: "
-        "{"
-        "\"answer_match\": \"<percentage value>\", "
-        "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
-        "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer>\"], "
-        "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
-        "}."
-    ),
-    answer=" ".join(flat_keywords),
-    details=1
-)
-
+        student_answer=" ".join(corrected_transcript_keywords),
+        question=(
+            "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
+            "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
+            "Only include **critical concepts** that are central to understanding the topic in the list of missing concepts. "
+            "Do not list superficial or highly specific terms as missing if the overall concept is conveyed. "
+            "Also, include additional concepts only if they introduce **new technical ideas** not present in the correct answer. "
+            "Avoid penalizing extra elaboration if it supports the main idea. "
+            "Ensure the output is deterministic — consistent results should be produced for the same input. "
+            "Provide a semantic similarity score that reflects conceptual understanding — not word-level overlap. "
+            "Output in the following JSON format: "
+            "{"
+            "\"answer_match\": \"<percentage value>\", "
+            "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
+            "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer>\"], "
+            "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
+            "}."
+        ),
+        answer=" ".join(flat_keywords),
+        details=1
+    )
 
     # Parse and display the results
     try:
@@ -332,8 +366,7 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     for idx, keyword in enumerate(primary_missed_keywords, 1):
         print(f"{idx}. {keyword}")
 
-    # Print Top 10 Secondary Missed Keywords (Based on Importance)
-    print("\nTop 10 Secondary Missed Keywords (Based on Importance):")
+    # Print Top 10 Secondary Missed Keywords (Based on Importance):
     for idx, keyword in enumerate(top_10_secondary_missed_keywords, 1):
         print(f"{idx}. {keyword}")
 
@@ -341,11 +374,6 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     print("\nMissing Keywords:")
     for idx, keyword in enumerate(missing_concepts, 1):
         print(f"{idx}. {keyword}")
-
-    # Print Additional Concepts
-    #print("\nAdditional Concepts:")
-    #for idx, concept in enumerate(additional_concepts, 1):
-        #print(f"{idx}. {concept}")
 
     # Print Reasons
     print("\nReasons:")
