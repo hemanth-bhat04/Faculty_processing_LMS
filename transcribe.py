@@ -13,7 +13,7 @@ def transcribe_audio(file_path):
             options = PrerecordedOptions(
                 model="nova",  # Use a simpler model
                 language="en-US",
-                diarize=False,
+                diarize=True,
                  punctuate=True # Disable diarization if not required
             )
 

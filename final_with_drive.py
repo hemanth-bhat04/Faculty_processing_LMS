@@ -301,6 +301,41 @@ def process_transcript_for_questions(transcript):
     question_count = sum(1 for sentence in sentences if is_question(sentence))
     return question_count
 
+def analyze_questions_in_transcript(transcript):
+    """
+    Analyze the transcript to count the number of questions and categorize them.
+    """
+    import re
+
+    # Split the transcript into sentences
+    sentences = re.split(r'[.!?]', transcript)
+    trainer_questions = 0
+    student_questions = 0
+    unique_students = set()
+
+    # Common question patterns
+    question_patterns = [
+        r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
+        r'\?$'  # Ends with a question mark
+    ]
+
+    # Iterate through sentences and analyze questions
+    for sentence in sentences:
+        sentence = sentence.strip().lower()
+        if not sentence:
+            continue
+
+        # Check if the sentence matches any question pattern
+        is_question = any(re.search(pattern, sentence, re.IGNORECASE) for pattern in question_patterns)
+        if is_question:
+            # Assume speaker 0 is the trainer, and others are students
+            if "trainer" in sentence:  # Replace with actual speaker identification logic if available
+                trainer_questions += 1
+            else:
+                student_questions += 1
+                unique_students.add("student")  # Replace with actual student speaker ID if available
+
+    return trainer_questions, student_questions, len(unique_students)
 
 # Main processing logic
 video_ids = ['Oy4duAOGdWQ', 'P2PMgnQSHYQ', 'efR1C6CvhmE']  # Example video IDs
@@ -309,6 +344,21 @@ print(f"Processing video IDs: {video_ids}")
 # Fetch and unionize keywords for all video IDs
 unionized_keywords = fetch_and_unionize_keywords(video_ids)
 print(f"Unionized Keywords from All Videos: {unionized_keywords}")
+
+# Process the audio file and extract keywords
+corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
+
+# Combine all processed transcripts into a single transcript
+complete_transcript = " ".join(corrected_transcript_keywords)
+
+# Perform question analysis on the complete transcript
+trainer_questions, student_questions, unique_students_count = analyze_questions_in_transcript(complete_transcript)
+
+# Print the results of question analysis
+print("\n=== Question Analysis ===")
+print(f"Number of Questions Asked by Trainer: {trainer_questions}")
+print(f"Number of Questions Asked by Students: {student_questions}")
+print(f"Number of Unique Students Participated: {unique_students_count}")
 
 # Process the audio file and extract keywords
 corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
@@ -338,19 +388,26 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     semantic_result = semantic_smart_answer(
         student_answer=" ".join(corrected_transcript_keywords),
         question=(
-            "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
-            "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
+            "We are assessing whether the trainer has covered all the required topics during the session. "
+            "The required topics are derived from the suggested content present in multiple videos uploaded as video IDs. "
+            "The trainer's class audio is uploaded as a Google Drive audio link, which is processed to extract the transcript. "
+            "The combined keywords are aggregated from multiple videos and represent the topics that should be covered. "
+            "Compare the transcript of the trainer's session with the combined keywords to determine the following: "
+            "1. How many topics were missed by the trainer. "
+            "2. The percentage match between the topics covered by the trainer and the required topics. "
+            "Focus on core conceptual alignment and allow for rephrased or synonymous ideas to count as matching. "
+            "Disregard differences in structure, grammar, or formatting. "
             "Only include **critical concepts** that are central to understanding the topic in the list of missing concepts. "
             "Do not list superficial or highly specific terms as missing if the overall concept is conveyed. "
-            "Also, include additional concepts only if they introduce **new technical ideas** not present in the correct answer. "
+            "Include additional concepts only if they introduce **new technical ideas** not present in the required topics. "
             "Avoid penalizing extra elaboration if it supports the main idea. "
             "Ensure the output is deterministic — consistent results should be produced for the same input. "
             "Provide a semantic similarity score that reflects conceptual understanding — not word-level overlap. "
             "Output in the following JSON format: "
             "{"
             "\"answer_match\": \"<percentage value>\", "
-            "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
-            "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer. Include only technically relevant concepts.>\"], "
+            "\"missing_concepts\": [\"<key concepts from the required topics that are truly missing in the trainer's session>\"], "
+            "\"additional_concepts\": [\"<key concepts introduced by the trainer that are not present in the required topics. Include only technically relevant concepts.>\"], "
             "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
             "}."
         ),
