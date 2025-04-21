@@ -267,15 +267,26 @@ def fetch_and_unionize_keywords(video_ids):
     Fetch dynamic critical keywords for multiple video IDs and unionize them.
     """
     all_keywords = set()
-    for video_id in video_ids:
-        try:
-            dynamic_keywords = fetch_all_keywords(video_id)  # Fetch keywords for the video ID
-            all_keywords.update(dynamic_keywords)  # Add to the union set
-            print(f"Fetched keywords for video ID {video_id}: {dynamic_keywords}")
-        except Exception as e:
-            print(f"Error fetching keywords for video ID {video_id}: {e}")
-    return sorted(all_keywords)  # Return sorted unionized keywords
+    fetched_keywords = {}  # Cache to store fetched keywords for each video ID
 
+    for video_id in video_ids:
+        if video_id in fetched_keywords:
+            # Use cached keywords if already fetched
+            dynamic_keywords = fetched_keywords[video_id]
+        else:
+            try:
+                # Fetch keywords for the video ID
+                dynamic_keywords = fetch_all_keywords(video_id)
+                fetched_keywords[video_id] = dynamic_keywords  # Cache the result
+                print(f"Fetched keywords for video ID {video_id}: {dynamic_keywords}")
+            except Exception as e:
+                print(f"Error fetching keywords for video ID {video_id}: {e}")
+                dynamic_keywords = []
+
+        # Add to the union set
+        all_keywords.update(dynamic_keywords)
+
+    return sorted(all_keywords)  # Return sorted unionized keywords
 
 def is_question(sentence):
     """
@@ -388,26 +399,19 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
     semantic_result = semantic_smart_answer(
         student_answer=" ".join(corrected_transcript_keywords),
         question=(
-            "We are assessing whether the trainer has covered all the required topics during the session. "
-            "The required topics are derived from the suggested content present in multiple videos uploaded as video IDs. "
-            "The trainer's class audio is uploaded as a Google Drive audio link, which is processed to extract the transcript. "
-            "The combined keywords are aggregated from multiple videos and represent the topics that should be covered. "
-            "Compare the transcript of the trainer's session with the combined keywords to determine the following: "
-            "1. How many topics were missed by the trainer. "
-            "2. The percentage match between the topics covered by the trainer and the required topics. "
-            "Focus on core conceptual alignment and allow for rephrased or synonymous ideas to count as matching. "
-            "Disregard differences in structure, grammar, or formatting. "
+            "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
+            "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
             "Only include **critical concepts** that are central to understanding the topic in the list of missing concepts. "
             "Do not list superficial or highly specific terms as missing if the overall concept is conveyed. "
-            "Include additional concepts only if they introduce **new technical ideas** not present in the required topics. "
+            "Also, include additional concepts only if they introduce **new technical ideas** not present in the correct answer. "
             "Avoid penalizing extra elaboration if it supports the main idea. "
             "Ensure the output is deterministic — consistent results should be produced for the same input. "
             "Provide a semantic similarity score that reflects conceptual understanding — not word-level overlap. "
             "Output in the following JSON format: "
             "{"
             "\"answer_match\": \"<percentage value>\", "
-            "\"missing_concepts\": [\"<key concepts from the required topics that are truly missing in the trainer's session>\"], "
-            "\"additional_concepts\": [\"<key concepts introduced by the trainer that are not present in the required topics. Include only technically relevant concepts.>\"], "
+            "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
+            "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer. Include only technically relevant concepts.>\"], "
             "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
             "}."
         ),
