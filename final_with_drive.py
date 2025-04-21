@@ -262,28 +262,77 @@ def compare_keywords(critical_all_keywords, dynamic_critical_keywords):
         "unique_to_dynamic": sorted(unique_to_dynamic),
     }
 
+def fetch_and_unionize_keywords(video_ids):
+    """
+    Fetch dynamic critical keywords for multiple video IDs and unionize them.
+    """
+    all_keywords = set()
+    for video_id in video_ids:
+        try:
+            dynamic_keywords = fetch_all_keywords(video_id)  # Fetch keywords for the video ID
+            all_keywords.update(dynamic_keywords)  # Add to the union set
+            print(f"Fetched keywords for video ID {video_id}: {dynamic_keywords}")
+        except Exception as e:
+            print(f"Error fetching keywords for video ID {video_id}: {e}")
+    return sorted(all_keywords)  # Return sorted unionized keywords
+
+
+def is_question(sentence):
+    """
+    Check if a sentence is a question using regular expressions.
+    """
+    import re
+    question_patterns = [
+        r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
+        r'\?$'  # Ends with a question mark
+    ]
+    sentence = sentence.strip().lower()
+    for pattern in question_patterns:
+        if re.search(pattern, sentence, re.IGNORECASE):  # Corrected usage of re.search
+            return True
+    return False
+
+
+def process_transcript_for_questions(transcript):
+    """
+    Process the transcript to count the number of questions.
+    """
+    sentences = transcript.split(".")
+    question_count = sum(1 for sentence in sentences if is_question(sentence))
+    return question_count
+
+
+# Main processing logic
+video_ids = ['Oy4duAOGdWQ', 'P2PMgnQSHYQ', 'efR1C6CvhmE']  # Example video IDs
+print(f"Processing video IDs: {video_ids}")
+
+# Fetch and unionize keywords for all video IDs
+unionized_keywords = fetch_and_unionize_keywords(video_ids)
+print(f"Unionized Keywords from All Videos: {unionized_keywords}")
 
 # Process the audio file and extract keywords
 corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
 if corrected_transcript_keywords:  # Only proceed if we have keywords
     # Clear previous keywords
-    critical_keywords = []
+    critical_keywords = unionized_keywords  # Use the unionized keywords from all videos
     flat_keywords = []
 
-    # Fetch keywords dynamically based on the current audio file or transcript
-    hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
-    flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
-
-    # Use dynamic_critical_keywords to unionize all 5-minute keywords into one sorted list
+    # Fetch hardcoded keywords dynamically based on the current audio file or transcript
     try:
-        video_id = 'Oy4duAOGdWQ'  # Use the same video_id as in fetch_keywords
-        dynamic_critical_keywords = fetch_all_keywords(video_id)  # Pass the video_id to fetch_all_keywords
-        critical_keywords = sorted(set(dynamic_critical_keywords))  # Unionize and sort the keywords
-        print(f"Dynamic Critical Keywords: {critical_keywords}")
+        hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')  # Replace with dynamic input if needed
+        flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
+        print(f"Flat Keywords from 5-Minute Segments: {flat_keywords}")
     except Exception as e:
-        print(f"Error fetching dynamic critical keywords: {e}")
-        critical_keywords = []  # Fallback to an empty list if there's an error
+        print(f"Error fetching hardcoded keywords: {e}")
+        flat_keywords = []
+
+    # Combine unionized keywords and flat keywords for semantic matching
+    combined_keywords = sorted(set(critical_keywords + flat_keywords))
+    print(f"Combined Keywords for Semantic Matching: {combined_keywords}")
+
+    # Compare Critical All Keywords and Dynamic Critical Keywords
+    comparison_results = compare_keywords(flat_keywords, critical_keywords)
 
     # Semantic Matching
     semantic_result = semantic_smart_answer(
@@ -301,11 +350,11 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
             "{"
             "\"answer_match\": \"<percentage value>\", "
             "\"missing_concepts\": [\"<key concepts from the correct answer that are truly missing in the student's answer>\"], "
-            "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer>\"], "
+            "\"additional_concepts\": [\"<key concepts introduced by the student that are not present in the correct answer. Include only technically relevant concepts.>\"], "
             "\"reasons\": \"<clear explanation of the matching score and reasoning behind each listed missing or additional concept. Avoid vague justifications.>\""
             "}."
         ),
-        answer=" ".join(flat_keywords),
+        answer=" ".join(combined_keywords),
         details=1
     )
 
@@ -317,70 +366,60 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
         else:
             response = semantic_result  # Use it directly if it's already a dictionary
 
-        # Parse the nested JSON string inside the "content" field
-        if isinstance(response['content'], str):
-            try:
-                # Extract the JSON part from the content field
-                content_start = response['content'].find("{")
-                if content_start != -1:
-                    response['content'] = json.loads(response['content'][content_start:])
-                else:
-                    raise ValueError("No JSON object found in 'content' field")
-            except (json.JSONDecodeError, ValueError) as e:
-                print(f"Error decoding nested JSON in 'content': {e}")
-                print(f"Raw 'content' field: {response['content']}")
-                response['content'] = {
-                    "answer_match": "0%",
-                    "missing_concepts": [],
-                    "additional_concepts": [],
-                    "reasons": "Error parsing the 'content' field."
-                }
+        # Check if 'content' exists in the response
+        if 'content' in response:
+            # Parse the nested JSON string inside the "content" field
+            if isinstance(response['content'], str):
+                try:
+                    # Extract the JSON part from the content field
+                    response['content'] = json.loads(response['content'])
+                except json.JSONDecodeError as e:
+                    print(f"Error decoding 'content' field: {e}")
+                    response['content'] = {
+                        "answer_match": "0%",
+                        "missing_concepts": [],
+                        "additional_concepts": [],
+                        "reasons": "Error parsing the 'content' field."
+                    }
+        else:
+            # Handle missing 'content' key
+            print("Error: 'content' key is missing in the response.")
+            response['content'] = {
+                "answer_match": "0%",
+                "missing_concepts": [],
+                "additional_concepts": [],
+                "reasons": "The 'content' key is missing in the API response."
+            }
 
-    except json.JSONDecodeError as e:
-        print(f"Error decoding JSON: {e}")
-        print(f"Raw semantic_result: {semantic_result}")
-        response = {"content": {"answer_match": "0%", "missing_concepts": [], "additional_concepts": [], "reasons": ""}}
-
-    # Debugging: Print the parsed response
-    print("\nDebug: Parsed Response from API:")
-    print(json.dumps(response, indent=4))  # Pretty print the response
-
-    # Extract details from the response
-    try:
+        # Extract details from the response
         answer_match = response['content'].get('answer_match', "0%")
         missing_concepts = response['content'].get('missing_concepts', [])
         additional_concepts = response['content'].get('additional_concepts', [])
         reasons = response['content'].get('reasons', "")
-    except (KeyError, IndexError, AttributeError) as e:
-        print(f"Error extracting details from response: {e}")
-        answer_match = "0%"
-        missing_concepts = []
-        additional_concepts = []
-        reasons = ""
 
-    print("\n=== Lecture Analysis ===")
-    print(f"Answer Match: {answer_match}")
+        print("\n=== Lecture Analysis ===")
+        print(f"Answer Match: {answer_match}")
 
-    # Print Primary Missed Keywords
-    print("\nPrimary Missed Keywords (Most Important):")
-    for idx, keyword in enumerate(primary_missed_keywords, 1):
-        print(f"{idx}. {keyword}")
+        # Print Primary Missed Keywords
+        print("\nPrimary Missed Keywords (Most Important):")
+        for idx, keyword in enumerate(missing_concepts[:20], 1):  # Limit to top 20
+            print(f"{idx}. {keyword}")
 
-    # Print Top 10 Secondary Missed Keywords (Based on Importance):
-    for idx, keyword in enumerate(top_10_secondary_missed_keywords, 1):
-        print(f"{idx}. {keyword}")
+        # Print Keyword Comparison Results
+        print("\n=== Keyword Comparison ===")
+        print(f"Common Keywords: {comparison_results['common_keywords']}")
+        print(f"Top 20 Missing in Dynamic Critical Keywords: {comparison_results['missing_in_dynamic'][:20]}")
+        print(f"Top 20 Unique to Dynamic Critical Keywords: {comparison_results['unique_to_dynamic'][:20]}")
 
-    # Print Missing Keywords
-    print("\nMissing Keywords:")
-    for idx, keyword in enumerate(missing_concepts, 1):
-        print(f"{idx}. {keyword}")
+        # Print Reasons from Semantic Matching
+        print("\nReasons from Semantic Matching:")
+        print(reasons)
 
-    # Print Reasons
-    print("\nReasons:")
-    print(reasons)
+        print(f"\nTotal Questions Asked: {total_questions}")
+        print("=====================")
 
-    print(f"\nTotal Questions Asked: {total_questions}")
-    print("=====================")
+    except Exception as e:
+        print(f"Error processing semantic result: {e}")
 
 else:
     print("Error: Could not process audio file")
