@@ -14,7 +14,7 @@ def transcribe_audio(file_path):
                 model="nova",  # Use a simpler model
                 language="en-US",
                 diarize=True,
-                 punctuate=True # Disable diarization if not required
+                punctuate=True # Disable diarization if not required
             )
 
             response = deepgram.listen.prerecorded.v('1').transcribe_file(payload, options)
@@ -30,3 +30,7 @@ def transcribe_audio(file_path):
     except Exception as e:
         print("Error:", e)
         return ""
+    
+transcript = transcribe_audio('D:/Faculty_proc_new/Faculty_processing_LMS/audio_file2.mp3')
+print("Transcription:", transcript)
+

@@ -10,6 +10,7 @@ import boto3
 from botocore.client import Config
 from queue import Queue
 from fetch_keywords import fetch_keywords, fetch_all_keywords
+from question_check import analyze_classroom_audio
 s3 = boto3.client('s3',
                   aws_access_key_id="AKIA43Y7V2OHU52XAOHQ",
                   aws_secret_access_key="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",
@@ -68,7 +69,7 @@ def generate_s3_link(bucket, s3_file, region):
 
 
 # Fetch the audio file from Google Drive 
-google_drive_file_id = "13qfbbFB38m_5iqtJCpReEx29HWUV2cqp"  
+google_drive_file_id = "1e11nDLwLFr5hVWlMyPmjYWFg4s0mgYrt"  
 local_audio_local_audio_file_path = "audio_file2.mp3"
 print(f"Downloading new file with ID: {google_drive_file_id}")
 download_file_from_google_drive(google_drive_file_id, local_audio_local_audio_file_path)
@@ -200,7 +201,7 @@ def process_audio_chunks(local_audio_file_path):
     # Process each chunk individually
     for chunk_path in chunks:
         transcript = transcribe_audio(chunk_path)
-        print(f"Transcript for {chunk_path}: {transcript}")
+        #print(f"Transcript for {chunk_path}: {transcript}")
         if transcript:
             transcript_queue.put(transcript)
         else:
@@ -222,8 +223,8 @@ def process_audio_chunks(local_audio_file_path):
 
     # Combine all transcripts into a single transcript
     complete_transcript = " ".join(processed_transcripts)
-    print(f"\nDEBUG - Complete Transcript: {complete_transcript}")
-    print(f"DEBUG - Complete Transcript Length: {len(complete_transcript)}")
+    #print(f"\nDEBUG - Complete Transcript: {complete_transcript}")
+    #print(f"DEBUG - Complete Transcript Length: {len(complete_transcript)}")
     if len(complete_transcript) < 100:
         print("WARNING: Transcript might be empty or too short")
 
@@ -288,65 +289,20 @@ def fetch_and_unionize_keywords(video_ids):
 
     return sorted(all_keywords)  # Return sorted unionized keywords
 
-def is_question(sentence):
+'''def is_question(sentence: str) -> bool:
     """
-    Check if a sentence is a question using regular expressions.
+    Determines if a given sentence is a question.
     """
-    import re
-    question_patterns = [
-        r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
-        r'\?$'  # Ends with a question mark
-    ]
-    sentence = sentence.strip().lower()
-    for pattern in question_patterns:
-        if re.search(pattern, sentence, re.IGNORECASE):  # Corrected usage of re.search
-            return True
-    return False
+    question_words = ["who", "what", "where", "when", "why", "how", "do", "does", "did", "is", "are", "was", "were", "can", "could", "should", "would"]
+    return sentence.strip().endswith("?") or any(sentence.lower().startsWith(q + " ") for q in question_words)'''
 
-
-def process_transcript_for_questions(transcript):
+'''def process_transcript_for_questions(transcript):
     """
     Process the transcript to count the number of questions.
     """
     sentences = transcript.split(".")
     question_count = sum(1 for sentence in sentences if is_question(sentence))
-    return question_count
-
-def analyze_questions_in_transcript(transcript):
-    """
-    Analyze the transcript to count the number of questions and categorize them.
-    """
-    import re
-
-    # Split the transcript into sentences
-    sentences = re.split(r'[.!?]', transcript)
-    trainer_questions = 0
-    student_questions = 0
-    unique_students = set()
-
-    # Common question patterns
-    question_patterns = [
-        r'^(what|why|how|when|where|who|which|whose|do|does|did|is|are|can|could|would|will|should)\b.*',  # Starts with question words
-        r'\?$'  # Ends with a question mark
-    ]
-
-    # Iterate through sentences and analyze questions
-    for sentence in sentences:
-        sentence = sentence.strip().lower()
-        if not sentence:
-            continue
-
-        # Check if the sentence matches any question pattern
-        is_question = any(re.search(pattern, sentence, re.IGNORECASE) for pattern in question_patterns)
-        if is_question:
-            # Assume speaker 0 is the trainer, and others are students
-            if "trainer" in sentence:  # Replace with actual speaker identification logic if available
-                trainer_questions += 1
-            else:
-                student_questions += 1
-                unique_students.add("student")  # Replace with actual student speaker ID if available
-
-    return trainer_questions, student_questions, len(unique_students)
+    return question_count'''
 
 # Main processing logic
 video_ids = ['Oy4duAOGdWQ', 'P2PMgnQSHYQ', 'efR1C6CvhmE']  # Example video IDs
@@ -357,24 +313,12 @@ unionized_keywords = fetch_and_unionize_keywords(video_ids)
 print(f"Unionized Keywords from All Videos: {unionized_keywords}")
 
 # Process the audio file and extract keywords
-corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
+processed_transcripts, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
 
 # Combine all processed transcripts into a single transcript
-complete_transcript = " ".join(corrected_transcript_keywords)
+complete_transcript = " ".join(processed_transcripts)
 
-# Perform question analysis on the complete transcript
-trainer_questions, student_questions, unique_students_count = analyze_questions_in_transcript(complete_transcript)
-
-# Print the results of question analysis
-print("\n=== Question Analysis ===")
-print(f"Number of Questions Asked by Trainer: {trainer_questions}")
-print(f"Number of Questions Asked by Students: {student_questions}")
-print(f"Number of Unique Students Participated: {unique_students_count}")
-
-# Process the audio file and extract keywords
-corrected_transcript_keywords, total_questions, primary_missed_keywords, secondary_missed_keywords, top_10_secondary_missed_keywords = process_audio_chunks(local_audio_local_audio_file_path)
-
-if corrected_transcript_keywords:  # Only proceed if we have keywords
+if processed_transcripts:  # Only proceed if we have transcripts
     # Clear previous keywords
     critical_keywords = unionized_keywords  # Use the unionized keywords from all videos
     flat_keywords = []
@@ -397,7 +341,7 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
 
     # Semantic Matching
     semantic_result = semantic_smart_answer(
-        student_answer=" ".join(corrected_transcript_keywords),
+        student_answer=" ".join(processed_transcripts),
         question=(
             "Evaluate the semantic similarity between the student's answer and the correct answer, focusing on core conceptual alignment. "
             "Allow for rephrased, synonymous, or paraphrased ideas to count as matching, and disregard differences in structure, grammar, or formatting. "
@@ -476,7 +420,7 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
         print("\nReasons from Semantic Matching:")
         print(reasons)
 
-        print(f"\nTotal Questions Asked: {total_questions}")
+        #print(f"\nTotal Questions Asked: {total_questions}")
         print("=====================")
 
     except Exception as e:
@@ -484,6 +428,21 @@ if corrected_transcript_keywords:  # Only proceed if we have keywords
 
 else:
     print("Error: Could not process audio file")
+
+# Analyze classroom audio
+result = analyze_classroom_audio('D:/Faculty_proc_new/Faculty_processing_LMS/audio_file2.mp3')
+
+# Print the results
+#print("\n=== Transcription ===")
+#print(result['transcript'])
+
+print("\n=== Question Analysis ===")
+print("Trainer Questions:", result['trainer_questions'])
+print("Student Questions:", result['student_questions'])
+print("Unique Students Participated:", result['unique_students'])
+#print("Trainer Answers:", result['trainer_answers'])
+#print("Student Answers:", result['student_answers'])
+#print("Detailed Answers:", result['detailed_answers'])
 
 
 
