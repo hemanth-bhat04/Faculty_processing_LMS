@@ -32,5 +32,5 @@ def transcribe_audio(file_path):
         return ""
     
 transcript = transcribe_audio('D:/Faculty_proc_new/Faculty_processing_LMS/audio_file2.mp3')
-print("Transcription:", transcript)
+#print("Transcription:", transcript)
 

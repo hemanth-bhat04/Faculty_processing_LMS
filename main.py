@@ -2,10 +2,13 @@ import json
 import soundfile as sf
 from nlp_keywords import get_weighted_queries
 from smatch import semantic_smart_answer
-from transcribe import transcribe_audio  # Use the actual transcribe function
+from transcribe import transcribe_audio
+from fetch_videos import get_course_vids_secs
 import requests
 import boto3
 import os
+import re
+import time
 from queue import Queue
 from fetch_keywords import fetch_keywords, fetch_all_keywords
 from question_check import analyze_classroom_audio
@@ -18,6 +21,20 @@ s3 = boto3.client('s3',
                   aws_secret_access_key="dqStRlxAPZxxM2goyX2HSsXsv/fZeL+MrL75FdSo",
                   config=Config(signature_version='s3v4', s3={'use_accelerate_endpoint': True}),
                   region_name="ap-south-1")
+
+
+def generate_filename(extension="mp3"):
+    current_time_in_minutes = int(time.time() // 60)
+    return f"{current_time_in_minutes}_class_audio.{extension}"
+
+
+def extract_gdrive_file_id(gdrive_url):
+    match = re.search(r"\/d\/([a-zA-Z0-9_-]+)\/", gdrive_url)
+    if match:
+        return match.group(1)
+    else:
+        raise ValueError("Invalid Google Drive URL")
+
 
 # Google Drive file download function 
 def download_file_from_google_drive(file_id, destination):
@@ -50,8 +67,8 @@ def download_file_from_google_drive(file_id, destination):
     save_response_content(response)
     print(f"Downloaded file to {destination}")
 
-# S3 download function
 
+# S3 download function
 def download_from_s3(s3_url, local_path):
     try:
         parsed = urlparse(s3_url)
@@ -73,7 +90,7 @@ def download_from_s3(s3_url, local_path):
         return False
 
 # S3 upload function 
-def upload_to_aws(local_file, s3_file, bucket="copyrvswaroop"):
+def upload_to_aws(local_file, s3_file, bucket="chatlms"):
     try:
         s3.upload_file(local_file, bucket, s3_file)
         return True
@@ -95,9 +112,10 @@ def split_audio_into_chunks(local_audio_file_path, chunk_duration=240):
         audio, sample_rate = sf.read(local_audio_file_path)
         chunk_size_samples = int(chunk_duration * sample_rate)
         chunks = []
+        chunk_links = []
 
         total_chunks = (len(audio) + chunk_size_samples - 1) // chunk_size_samples
-        print(f"Total chunks to process: {total_chunks}")
+        # print(f"Total chunks to process: {total_chunks}")
 
         for i in range(total_chunks):
             try:
@@ -109,20 +127,21 @@ def split_audio_into_chunks(local_audio_file_path, chunk_duration=240):
                 sf.write(chunk_path, chunk, sample_rate)
                 chunks.append(chunk_path)
 
-                s3_file_key = f"audio_chunks/{os.path.basename(chunk_path)}"
+                s3_file_key = os.path.basename(chunk_path)
                 if upload_to_aws(chunk_path, s3_file_key):
-                    s3_link = generate_s3_link("copyrvswaroop", s3_file_key, "ap-south-1")
-                    print(f"Processed chunk {i+1}/{total_chunks}:\n  - File: {chunk_path}\n  - S3 Link: {s3_link}\n")
+                    s3_link = generate_s3_link("chatlms", s3_file_key, "ap-south-1")
+                    chunk_links.append(s3_link)
+                    # print(f"Processed chunk {i+1}/{total_chunks}:\n  - File: {chunk_path}\n  - S3 Link: {s3_link}\n")
             except Exception as e:
                 print(f"Error processing chunk {i+1}/{total_chunks}: {str(e)}")
                 continue
 
         print("=== Audio Processing Complete ===\n")
-        return chunks
+        return chunks, chunk_links
 
     except Exception as e:
         print(f"Error in split_audio_into_chunks: {str(e)}")
-        return []
+        return [], []
 
 def process_audio_file(input_type, input_source):
     """
@@ -131,11 +150,12 @@ def process_audio_file(input_type, input_source):
     For S3, process the list of pre-split audio chunks directly.
     """
     if input_type == "google_drive":
-        print(f"Downloading from Google Drive with ID: {input_source}")
-        local_audio_file_path = "audio_file2.mp3"
+        local_audio_file_path = generate_filename(extension="mp3")
+        print(f"Downloading from Google Drive into: {local_audio_file_path}")
         download_file_from_google_drive(input_source, local_audio_file_path)
-        return split_audio_into_chunks(local_audio_file_path)  # Split and process chunks
-
+        chunk_paths, _ = split_audio_into_chunks(local_audio_file_path)
+        return chunk_paths
+    
     elif input_type == "s3":
         print("Processing pre-split audio chunks from S3...")
         if not isinstance(input_source, list):
@@ -157,14 +177,13 @@ def process_audio_file(input_type, input_source):
 
 def normalize_keyword(keyword: str) -> str:
     """Normalize the keyword by lowercasing and removing punctuation."""
-    import re
+    
     return re.sub(r'[^\w\s]', '', keyword.lower()).strip()
 
 def count_questions_in_transcript(transcript: str) -> int:
     """
     Counts the number of questions in the transcript using simple regex patterns.
     """
-    import re
     
     # Split into sentences
     sentences = re.split('[.!?]', transcript)
@@ -224,7 +243,7 @@ def process_audio_chunks(chunks):
 
     # Use regex-based question counting
     question_count = count_questions_in_transcript(complete_transcript)
-    print(f"DEBUG - Total Questions Detected: {question_count}")
+    # print(f"DEBUG - Total Questions Detected: {question_count}")
 
     # Placeholder for missed keywords
     primary_missed_keywords = set()
@@ -258,31 +277,68 @@ def fetch_and_unionize_keywords(video_ids):
     fetched_keywords = {}  # Cache to store fetched keywords for each video ID
 
     for video_id in video_ids:
-        if video_id in fetched_keywords:
-            dynamic_keywords = fetched_keywords[video_id]
-        else:
-            try:
-                dynamic_keywords = fetch_all_keywords(video_id)
-                fetched_keywords[video_id] = dynamic_keywords
-                print(f"Fetched keywords for video ID {video_id}: {dynamic_keywords}")
-            except Exception as e:
-                print(f"Error fetching keywords for video ID {video_id}: {e}")
-                dynamic_keywords = []
+        for video_id in video_ids[0]:
+            video_id = video_id.strip()
+            if not video_id:
+                continue
+            if video_id in fetched_keywords:
+                dynamic_keywords = fetched_keywords[video_id]
+            else:
+                try:
+                    dynamic_keywords = fetch_all_keywords(video_id)
+                    fetched_keywords[video_id] = dynamic_keywords
+                    # print(f"Fetched keywords for video ID {video_id}: {dynamic_keywords}")
+                except Exception as e:
+                    print(f"Error fetching keywords for video ID {video_id}: {e}")
+                    dynamic_keywords = []
 
         all_keywords.update(dynamic_keywords)
 
     return sorted(all_keywords)
 
+def filter_best_keywords(flat_keywords, chunk_keywords):
+    """
+    flat_keywords: list of all keywords (flattened)
+    chunk_keywords: list of lists, each sublist is keywords for a chunk
+    Returns: filtered list of best keywords
+    """
+    from collections import Counter, defaultdict
+
+    chunk_count = len(chunk_keywords)
+    keyword_chunk_freq = defaultdict(int)
+    for chunk in chunk_keywords:
+        for kw in set(chunk):  # set to avoid double-counting in a chunk
+            keyword_chunk_freq[kw] += 1
+
+    keyword_total_freq = Counter(flat_keywords)
+
+    filtered_keywords = []
+    for kw in set(flat_keywords):
+        freq = keyword_chunk_freq[kw]
+        weight = keyword_total_freq[kw]
+        is_phrase = " " in kw.strip()
+
+        # Remove if too frequent (appears in >50% of chunks), unless it's a phrase
+        if freq > chunk_count // 2 and not is_phrase:
+            continue
+        # Remove single keywords with weight 1, unless it's a phrase
+        if weight == 1 and not is_phrase:
+            continue
+        filtered_keywords.append(kw)
+    return filtered_keywords
+
 # Main processing logic
-def main(input_type="google_drive", input_source=None):
+def process_audio(course_id, input_type="google_drive", input_source=None, server_type="dev"):
     """
-    Main function to process audio files from Google Drive or S3.
+    Main function to process audio files based on course_id and server_type.
+    For Google Drive, process audio files using the Google Drive ID.
+    For S3, process audio files using the provided list of S3 URLs.
     """
-    if not input_source:
-        if input_type == "google_drive":
-            input_source = "1e11nDLwLFr5hVWlMyPmjYWFg4s0mgYrt"  # Default Google Drive ID
-        else:
-            raise ValueError("S3 URLs must be provided when input_type is 's3'")
+    if input_type == "google_drive":
+        # Extract file ID from Google Drive URL
+        input_source = extract_gdrive_file_id(input_source)
+
+    video_ids = get_course_vids_secs(course_id, server_type, video_type=2)
 
     # Process the audio file based on input type
     chunks = process_audio_file(input_type, input_source)
@@ -297,29 +353,59 @@ def main(input_type="google_drive", input_source=None):
     # Combine all processed transcripts into a single transcript
     complete_transcript = " ".join(processed_transcripts)
 
+    result_list = []
+
     if processed_transcripts:
-        video_ids = ['Oy4duAOGdWQ', 'P2PMgnQSHYQ', 'efR1C6CvhmE']  # Example video IDs
-        print(f"Processing video IDs: {video_ids}")
+        # video_ids = ['Oy4duAOGdWQ', 'P2PMgnQSHYQ', 'efR1C6CvhmE']  # Example video IDs
+        # print(f"Processing video IDs: {video_ids}")
 
         # Fetch and unionize keywords for all video IDs
         unionized_keywords = fetch_and_unionize_keywords(video_ids)
-        print(f"Unionized Keywords from All Videos: {unionized_keywords}")
+        # print(f"Unionized Keywords from All Videos: {unionized_keywords}")
 
         critical_keywords = unionized_keywords
         flat_keywords = []
 
         try:
-            hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
-            flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
-            print(f"Flat Keywords from 5-Minute Segments: {flat_keywords}")
+            if video_ids:
+                for video_id in video_ids[0]:
+                    hardcoded_keywords = fetch_keywords(video_id)
+                    # hardcoded_keywords = fetch_keywords('Oy4duAOGdWQ')
+                    flat_keywords = [str(keyword) for sublist in hardcoded_keywords for keyword in sublist]
+                    # print(f"Flat Keywords from 5-Minute Segments: {flat_keywords}")
+            else:
+                print(f"Error fetching hardcoded keywords: {e}")
+                flat_keywords = []
         except Exception as e:
             print(f"Error fetching hardcoded keywords: {e}")
             flat_keywords = []
 
         combined_keywords = sorted(set(critical_keywords + flat_keywords))
-        print(f"Combined Keywords for Semantic Matching: {combined_keywords}")
+        # print(f"Combined Keywords for Semantic Matching: {combined_keywords}")
+
+        # Apply the new keyword filtering function
+        best_keywords = filter_best_keywords(flat_keywords, [combined_keywords])
+        # print(f"Best Keywords after Filtering: {best_keywords}")
 
         comparison_results = compare_keywords(flat_keywords, critical_keywords)
+
+        # --- Begin: Keyword presence dictionary ---
+        transcript_lower = complete_transcript.lower()
+        keyword_presence = {}
+        for keyword in flat_keywords:
+            keyword_str = str(keyword).lower()
+            # Use word boundaries for exact match, fallback to substring if not found
+            if re.search(r'\b' + re.escape(keyword_str) + r'\b', transcript_lower):
+                keyword_presence[keyword] = 1
+            else:
+                keyword_presence[keyword] = 0
+        # --- End: Keyword presence dictionary ---
+
+        # Pretty print keyword presence as a pipe-separated table
+        print("\n| Keyword | Present |")
+        print("|---------|---------|")
+        for k, v in keyword_presence.items():
+            print(f"| {k} | {v} |")
 
         semantic_result = semantic_smart_answer(
             student_answer=" ".join(processed_transcripts),
@@ -347,13 +433,17 @@ def main(input_type="google_drive", input_source=None):
         try:
             if isinstance(semantic_result, str):
                 response = json.loads(semantic_result)
+                # print(response)
             else:
                 response = semantic_result
 
             if 'content' in response:
                 if isinstance(response['content'], str):
                     try:
-                        response['content'] = json.loads(response['content'])
+                        if response['content'].strip().startswith('{'):
+                            response['content'] = json.loads(response['content'])
+                        else:
+                            raise json.JSONDecodeError("Empty or invalid JSON", response['content'], 0)
                     except json.JSONDecodeError as e:
                         print(f"Error decoding 'content' field: {e}")
                         response['content'] = {
@@ -376,20 +466,31 @@ def main(input_type="google_drive", input_source=None):
             additional_concepts = response['content'].get('additional_concepts', [])
             reasons = response['content'].get('reasons', "")
 
-            print("\n=== Lecture Analysis ===")
-            print(f"Answer Match: {answer_match}")
+            result_list.append({
+                "answer_match": answer_match,
+                "missing_concepts": missing_concepts,
+                # "additional_concepts": additional_concepts,
+                "reasons": reasons,
+                "reference_keywords": flat_keywords,
+                "keyword_presence": keyword_presence
+            })
 
-            print("\nPrimary Missed Keywords (Most Important):")
-            for idx, keyword in enumerate(missing_concepts[:20], 1):
-                print(f"{idx}. {keyword}")
+            print("DEBUG: Full semantic_result/response:", response)
 
-            print("\n=== Keyword Comparison ===")
-            print(f"Common Keywords: {comparison_results['common_keywords']}")
-            print(f"Top 20 Missing in Dynamic Critical Keywords: {comparison_results['missing_in_dynamic'][:20]}")
-            print(f"Top 20 Unique to Dynamic Critical Keywords: {comparison_results['unique_to_dynamic'][:20]}")
+            # print("\n=== Lecture Analysis ===")
+            # print(f"Answer Match: {answer_match}")
 
-            print("\nReasons from Semantic Matching:")
-            print(reasons)
+            # print("\nPrimary Missed Keywords (Most Important):")
+            # for idx, keyword in enumerate(missing_concepts[:20], 1):
+            #     print(f"{idx}. {keyword}")
+
+            # print("\n=== Keyword Comparison ===")
+            # print(f"Common Keywords: {comparison_results['common_keywords']}")
+            # print(f"Top 20 Missing in Dynamic Critical Keywords: {comparison_results['missing_in_dynamic'][:20]}")
+            # print(f"Top 20 Unique to Dynamic Critical Keywords: {comparison_results['unique_to_dynamic'][:20]}")
+
+            # print("\nReasons from Semantic Matching:")
+            # print(reasons)
 
         except Exception as e:
             print(f"Error processing semantic result: {e}")
@@ -400,18 +501,30 @@ def main(input_type="google_drive", input_source=None):
     # Analyze classroom audio
     result = analyze_classroom_audio(chunks[0])  # Use the first chunk for analysis
 
-    print("\n=== Question Analysis ===")
-    print("Trainer Questions:", result['trainer_questions'])
-    print("Student Questions:", result['student_questions'])
-    print("Unique Students Participated:", result['unique_students'])
+    if result_list:
+        result_list[0].update({
+            "trainer_questions": (result['trainer_questions']),
+            "student_questions": (result['student_questions']),
+            "unique_students_participated": result['unique_students']
+        })
+
+    # print("\n=== Question Analysis ===")
+    # print("Trainer Questions:", result['trainer_questions'])
+    # print("Student Questions:", result['student_questions'])
+    # print("Unique Students Participated:", result['unique_students'])
+
+    return json.dumps(result_list, indent=4)
+
 
 if __name__ == '__main__':
-    # Example usage:
-    # For Google Drive:
-    #main(input_type="google_drive", input_source="1e11nDLwLFr5hVWlMyPmjYWFg4s0mgYrt")
-    
-      #For S3:
-    main(input_type="s3", input_source=[
-        "https://copyrvswaroop.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_0.wav",
-        "https://copyrvswaroop.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_1.wav"
-    ])
+    #Example usage:
+    #For Google Drive:
+    # process_audio(input_type="google_drive", input_source="1e11nDLwLFr5hVWlMyPmjYWFg4s0mgYrt")
+    #result = process_audio(212, input_type="google_drive", input_source="1e11nDLwLFr5hVWlMyPmjYWFg4s0mgYrt")
+    # print(result)
+
+    # For S3:
+    # result = process_audio(course_id=212, input_type="s3", input_source=["https://copyrvswaroop.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_0.wav", "https://copyrvswaroop.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_1.wav"])
+    #result = process_audio(course_id=212, input_type="s3", input_source=["https://chatlms.s3.ap-south-1.amazonaws.com/chunk_0.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/chunk_1.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/chunk_2.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/chunk_3.wav"])
+    result = process_audio(course_id=212, input_type="s3", input_source=["https://chatlms.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_0.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_1.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_2.wav", "https://chatlms.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_3.wav"])
+    print(result)

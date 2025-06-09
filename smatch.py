@@ -26,7 +26,7 @@ def semantic_smart_answer(student_answer: str, question: str, answer: str, detai
     payload = json.dumps({"prompt": prompt})
 
     try:
-        response = requests.post("http://164.52.212.233:8010/pi-chat-prod", data=payload, headers=headers, timeout=500)
+        response = requests.post("http://164.52.194.25:8006/chat", data=payload, headers=headers, timeout=500)
 
         if response.status_code == 200:
             response_data = json.loads(response.text)
