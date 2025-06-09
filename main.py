@@ -353,6 +353,46 @@ def process_audio(course_id, input_type="google_drive", input_source=None, serve
     # Combine all processed transcripts into a single transcript
     complete_transcript = " ".join(processed_transcripts)
 
+    # --- Weighted keyword extraction (top 20, weight > 1) ---
+    weighted_queries_result = get_weighted_queries(
+        complete_transcript,
+        y=len(complete_transcript),
+        subject="computer science",
+        level="computer science"
+    )
+    # Unpack the first element of the tuple (the dict of keywords and weights)
+    weighted_keywords_raw = weighted_queries_result[0]
+    # If it's a string, parse it as JSON
+    if isinstance(weighted_keywords_raw, str):
+        try:
+            weighted_keywords = json.loads(weighted_keywords_raw)
+        except Exception as e:
+            print(f"Error parsing weighted_keywords JSON: {e}")
+            weighted_keywords = {}
+    else:
+        weighted_keywords = weighted_keywords_raw
+
+    # Filter out keywords with weight <= 1
+    filtered_weighted = {k: v for k, v in weighted_keywords.items() if v > 1}
+    # Sort by weight descending and take top 20
+    top_20_weighted = dict(sorted(filtered_weighted.items(), key=lambda item: item[1], reverse=True)[:20])
+    # Use only these for reference_keywords
+    reference_keywords = list(top_20_weighted.keys())
+
+    # Keyword presence for top 20
+    transcript_lower = complete_transcript.lower()
+    keyword_presence = {}
+    for keyword in reference_keywords:
+        keyword_str = str(keyword).lower()
+        if re.search(r'\b' + re.escape(keyword_str) + r'\b', transcript_lower):
+            keyword_presence[keyword] = 1
+        else:
+            keyword_presence[keyword] = 0
+
+    # Output weighted keywords in JSON style
+    print("\nTop 20 Weighted Keywords (JSON):")
+    print(json.dumps(top_20_weighted, indent=4))
+
     result_list = []
 
     if processed_transcripts:
@@ -471,8 +511,9 @@ def process_audio(course_id, input_type="google_drive", input_source=None, serve
                 "missing_concepts": missing_concepts,
                 # "additional_concepts": additional_concepts,
                 "reasons": reasons,
-                "reference_keywords": flat_keywords,
-                "keyword_presence": keyword_presence
+                "reference_keywords": reference_keywords,
+                "keyword_presence": keyword_presence,
+                "top_20_weighted_keywords": top_20_weighted
             })
 
             print("DEBUG: Full semantic_result/response:", response)
