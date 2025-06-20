@@ -40,4 +40,19 @@ def fetch_all_keywords(video_id):
     return all_keywords
 
 # Example usage
-keywords = fetch_keywords('Oy4duAOGdWQ')
+keywords = fetch_keywords('g1Zbuk1gAfk')
+
+'''def fetch_and_unionize_keywords(video_ids):
+    """
+    Fetch dynamic critical keywords for multiple video IDs and unionize them.
+    """
+    all_keywords = set()
+    for vid in video_ids[0]:
+        try:
+            all_keywords.update(fetch_all_keywords(vid))
+        except Exception as e:
+            print(f"Keyword fetch error for {vid}: {e}")
+
+    return sorted(all_keywords)
+
+fetch_and_unionize_keywords(['g1Zbuk1gAfk', '4b5d3muPQmA'])'''

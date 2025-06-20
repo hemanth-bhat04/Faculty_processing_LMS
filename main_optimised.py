@@ -205,8 +205,8 @@ def process_audio(course_id, input_type="google_drive", input_source=None, serve
         except Exception as e:
             response = {"content": {
                 "answer_match": "0%",
-                "missing_concepts": [],
-                "additional_concepts": [],
+                #"missing_concepts": [],
+                #"additional_concepts": [],
                 "reasons": f"Parsing error: {e}"
             }}
     else:
@@ -270,4 +270,4 @@ if __name__ == '__main__':
             "https://chatlms.s3.ap-south-1.amazonaws.com/audio_chunks/chunk_3.wav"
         ]
     )
-    print(result)
+    #print(result)
